@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>猜数字 1A2B · POCKET 2000</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(140% 120% at 50% 38%, #a4c31d 0%, #9bbc0f 55%, #83a40d 100%);
+    color: #0f380f;
+    font-family: "PingFang SC", "Microsoft YaHei", ui-monospace, Menlo, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+  }
+  .screen {
+    position: fixed; inset: 0 0 32px 0;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .hintbar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 32px;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 12px; color: rgba(15,56,15,.72); letter-spacing: .03em;
+    padding: 0 12px; white-space: nowrap; overflow: hidden;
+  }
+  .hintbar b { color: #0f380f; font-weight: 600; }
+  .hintbar .sep { opacity: .45; }
+  @media (max-width: 640px) { .hintbar .keysHint, .hintbar .sep { display: none; } }
+</style>
+</head>
+<body>
+<div class="screen" id="screen"><canvas id="lcd"></canvas></div>
+<div class="hintbar">
+  <span id="status">加载中…</span>
+  <span class="sep">｜</span>
+  <span class="keysHint">数字键输入（4 位不重复）· 回车提交 · 退格删除 · A=数字位置都对 B=数字对位置错 · R 新开一局 · Esc 菜单</span>
+</div>
+
+<script id="core">
+"use strict";
+/* 1A2B 引擎（纯逻辑） */
+const AB = (() => {
+  function newSecret(rand) {
+    const digits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    for (let i = digits.length - 1; i > 0; i--) {
+      const j = (rand() * (i + 1)) | 0;
+      [digits[i], digits[j]] = [digits[j], digits[i]];
+    }
+    return digits.slice(0, 4).join("");
+  }
+  function judge(secret, guess) {
+    let a = 0, b = 0;
+    for (let i = 0; i < 4; i++) {
+      if (guess[i] === secret[i]) a++;
+      else if (secret.includes(guess[i])) b++;
+    }
+    return { a, b };
+  }
+  const valid = g => /^\d{4}$/.test(g) && new Set(g).size === 4;
+  return { newSecret, judge, valid };
+})();
+if (typeof module !== "undefined") module.exports = { AB };
+</script>
+
+<script>
+"use strict";
+const PAL = ["#9bbc0f", "#8bac0f", "#306230", "#0f380f"];
+const FONT = {
+  "0":"111101101101111","1":"010110010010111","2":"111001111100111","3":"111001011001111",
+  "4":"101101111001001","5":"111100111001111","6":"111100111101111","7":"111001010010010",
+  "8":"111101111101111","9":"111101111001111",
+  "A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110",
+  "E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101",
+  "I":"111010010010111","K":"101110100110101","L":"100100100100111","M":"101111111101101",
+  "N":"110101101101101","O":"010101101101010","P":"110101110100100","R":"110101110110101",
+  "S":"011100010001110","T":"111010010010010","U":"101101101101111","W":"101101111111101",
+  "Y":"101101010010010","X":"101101010101101","V":"101101101101010","Z":"111001010100111",
+  "J":"001001001101010","Q":"010101101011001",
+  " ":"000000000000000",":":"000010000010000","!":"010010010000010",">":"100010001010100",
+  "*":"000101010101000","-":"000000111000000","_":"000000000000111","?":"110001010000010",
+};
+function drawText(g, str, x, y, col, scale) {
+  scale = scale || 1;
+  g.fillStyle = PAL[col];
+  for (const ch of String(str).toUpperCase()) {
+    const bits = FONT[ch] || FONT[" "];
+    for (let i = 0; i < 15; i++) {
+      if (bits[i] === "1") g.fillRect(x + (i % 3) * scale, y + ((i / 3) | 0) * scale, scale, scale);
+    }
+    x += 4 * scale;
+  }
+  return x;
+}
+const textW = (str, scale) => String(str).length * 4 * (scale || 1) - (scale || 1);
+
+const SND = (() => {
+  let ctx = null;
+  function ensure() {
+    if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function tone(freq, dur, delay, type, vol) {
+    const c = ensure(); if (!c || game.muted) return;
+    const t0 = c.currentTime + (delay || 0);
+    const o = c.createOscillator(), gn = c.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    gn.gain.setValueAtTime(vol || 0.04, t0);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  return {
+    unlock: ensure,
+    key()   { tone(760, 0.03); },
+    del()   { tone(430, 0.035); },
+    submit(){ tone(520, 0.05); tone(650, 0.05, 0.05); },
+    bump()  { tone(100, 0.06, 0, "sawtooth", 0.05); },
+    win()   { [523, 659, 784, 988, 1319].forEach((f, i) => tone(f, 0.14, i * 0.1, "square", 0.05)); },
+  };
+})();
+
+const STORE_KEY = "guess_v1";
+function loadStore() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } }
+function saveStore() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {} }
+const store = loadStore();
+store.best = store.best || 0;   // 最少几次猜中
+store.wins = store.wins || 0;
+
+const cv = document.getElementById("lcd");
+const g2 = cv.getContext("2d");
+const screenBox = document.getElementById("screen");
+const statusEl = document.getElementById("status");
+
+const game = {
+  secret: "",
+  input: "",
+  guesses: [],          // {g, a, b}
+  won: false,
+  newBest: false,
+  blink: true,
+  muted: (function () { try { return localStorage.getItem("hh_muted") === "1"; } catch (e) { return false; } })(),
+};
+setInterval(() => { game.blink = !game.blink; render(); }, 480);
+
+const VISIBLE = 11;
+const NW = 96, NH = 14 + 12 + VISIBLE * 8 + 10;
+
+function newGame() {
+  game.secret = AB.newSecret(Math.random);
+  game.input = "";
+  game.guesses = [];
+  game.won = false;
+  game.newBest = false;
+  layout(); render(); updateStatus();
+}
+
+function updateStatus() {
+  statusEl.innerHTML = "<b>猜数字 1A2B</b> · 已猜 " + game.guesses.length + " 次" +
+    (store.best ? " · 最少 <b>" + store.best + "</b> 次猜中" : "") +
+    " · 共赢 " + store.wins + " 局" +
+    (game.muted ? " · 已静音" : "");
+}
+
+function layout() {
+  cv.width = NW; cv.height = NH;
+  const availW = screenBox.clientWidth - 8, availH = screenBox.clientHeight - 8;
+  let scale = Math.min(availW / NW, availH / NH);
+  if (scale >= 1) scale = Math.floor(scale);
+  cv.style.width = NW * scale + "px";
+  cv.style.height = NH * scale + "px";
+}
+
+function render() {
+  g2.fillStyle = PAL[0];
+  g2.fillRect(0, 0, NW, NH);
+  drawText(g2, "1A2B", 3, 4, 3);
+  const right = "TRY" + String(game.guesses.length).padStart(2, "0");
+  drawText(g2, right, NW - textW(right, 1) - 3, 4, 3);
+  g2.fillStyle = PAL[2];
+  g2.fillRect(0, 12, NW, 1);
+
+  // 输入行
+  let inp = "";
+  for (let i = 0; i < 4; i++) inp += i < game.input.length ? game.input[i] : "_";
+  const cursor = !game.won && game.blink ? ">" : " ";
+  drawText(g2, cursor + inp, 6, 16, 3);
+  if (game.won) drawText(g2, "= " + game.secret, 40, 16, 2);
+  g2.fillStyle = PAL[1];
+  g2.fillRect(4, 25, NW - 8, 1);
+
+  // 历史（最近 VISIBLE 条）
+  const startIdx = Math.max(0, game.guesses.length - VISIBLE);
+  const shown = game.guesses.slice(startIdx);
+  shown.forEach((r, i) => {
+    const y = 28 + i * 8;
+    const no = String(startIdx + i + 1).padStart(2, "0");
+    drawText(g2, no, 4, y, 1);
+    drawText(g2, r.g, 16, y, 3);
+    drawText(g2, r.a + "A" + r.b + "B", 38, y, r.a === 4 ? 3 : 2);
+    if (r.a === 4) drawText(g2, "*", 58, y, 3);
+  });
+  if (!game.guesses.length) {
+    drawText(g2, "GUESS 4", 8, 34, 2);
+    drawText(g2, "DIGITS", 8, 42, 2);
+    drawText(g2, "ALL DIFF", 8, 50, 2);
+  }
+
+  if (game.won) {
+    const t = "WIN " + game.guesses.length + (game.newBest ? " *" : "");
+    drawText(g2, t, Math.floor((NW - textW(t, 1)) / 2), NH - 18, 3);
+    if (game.blink) {
+      const t2 = "> R RETRY";
+      drawText(g2, t2, Math.floor((NW - textW(t2, 1)) / 2), NH - 9, 2);
+    }
+  }
+}
+
+/* ---------- 操作 ---------- */
+function typeDigit(d) {
+  if (game.won) return;
+  if (game.input.length >= 4) { SND.bump(); return; }
+  if (game.input.includes(d)) { SND.bump(); return; }
+  game.input += d;
+  SND.key();
+  render();
+}
+function delDigit() {
+  if (game.won || !game.input.length) return;
+  game.input = game.input.slice(0, -1);
+  SND.del();
+  render();
+}
+function submit() {
+  if (game.won) return;
+  if (!AB.valid(game.input)) { SND.bump(); return; }
+  const { a, b } = AB.judge(game.secret, game.input);
+  game.guesses.push({ g: game.input, a, b });
+  game.input = "";
+  if (a === 4) {
+    game.won = true;
+    store.wins++;
+    const n = game.guesses.length;
+    if (!store.best || n < store.best) { game.newBest = !!store.best; store.best = n; }
+    saveStore();
+    SND.win();
+  } else {
+    SND.submit();
+  }
+  render(); updateStatus();
+}
+
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+  else {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) req.call(el);
+  }
+}
+["fullscreenchange", "webkitfullscreenchange"].forEach(ev =>
+  document.addEventListener(ev, () => { layout(); render(); }));
+function toggleMute() {
+  game.muted = !game.muted;
+  try { localStorage.setItem("hh_muted", game.muted ? "1" : "0"); } catch (e) {}
+  updateStatus();
+  if (!game.muted) SND.key();
+}
+
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  SND.unlock();
+  if (/^[0-9]$/.test(e.key)) { e.preventDefault(); typeDigit(e.key); return; }
+  switch (e.key) {
+    case "Backspace": e.preventDefault(); delDigit(); break;
+    case "Enter": e.preventDefault(); submit(); break;
+    case "r": case "R": e.preventDefault(); SND.submit(); newGame(); break;
+    case "f": case "F": e.preventDefault(); toggleFullscreen(); break;
+    case "m": case "M": e.preventDefault(); toggleMute(); break;
+    case "Escape": e.preventDefault(); if (!isFullscreen()) location.href = "./"; break;
+  }
+});
+screenBox.addEventListener("pointerdown", () => { SND.unlock(); if (game.won) newGame(); });
+
+window.addEventListener("resize", () => { layout(); render(); });
+newGame();
+</script>
+</body>
+</html>

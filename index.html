@@ -24,7 +24,8 @@
   .logo canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
   .logo .sub { font-size: 14px; letter-spacing: .5em; text-indent: .5em; color: rgba(15,56,15,.75); font-weight: 700; }
 
-  .menu { display: flex; flex-direction: column; gap: 10px; width: min(460px, 92vw); }
+  .menu { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: min(780px, 94vw); }
+  @media (max-width: 620px) { .menu { grid-template-columns: 1fr; } }
   .item {
     display: flex; align-items: center; gap: 14px;
     padding: 10px 14px; border-radius: 10px; cursor: pointer;
@@ -67,7 +68,7 @@
   </div>
 </div>
 <div class="hintbar">
-  <span>↑ ↓ 选择 · Enter / 空格 进入 · F 全屏 · M 音效</span>
+  <span>方向键 选择 · Enter / 空格 进入 · F 全屏 · M 音效</span>
 </div>
 
 <script>
@@ -76,7 +77,7 @@ const PAL = ["#9bbc0f", "#8bac0f", "#306230", "#0f380f"];
 const FONT = {
   "0":"111101101101111","2":"111001111100111","A":"010101111101101","B":"110101110101110",
   "K":"101110100110101","N":"110101101101101","O":"010101101101010","S":"011100010001110",
-  "-":"000000111000000"," ":"000000000000000","P":"110101110100100","C":"011100100100011","E":"111100110100111","T":"111010010010010",
+  "-":"000000111000000"," ":"000000000000000","P":"110101110100100","C":"011100100100011","E":"111100110100111","T":"111010010010010","1":"010110010010111",
 };
 function drawText(g, str, x, y, col, scale) {
   g.fillStyle = PAL[col];
@@ -152,6 +153,29 @@ function lightsProgress() {
   return "50 关" + (n ? " · 已通 " + n : " · 把灯全关掉");
 }
 
+function simonProgress() {
+  const s = readJSON("simon_v1");
+  return s.best ? "最长记住 " + s.best + " 步" : "看灯闪，凭记忆复现";
+}
+function guessProgress() {
+  const s = readJSON("guess_v1");
+  return s.best ? "最少 " + s.best + " 次猜中 · 赢 " + (s.wins || 0) + " 局" : "文曲星经典 · 4 位数推理";
+}
+function minesProgress() {
+  const s = readJSON("mines_v1");
+  const b = s.best || {};
+  const parts = [];
+  if (b[1]) parts.push("初级 " + b[1] + "s");
+  if (b[2]) parts.push("中级 " + b[2] + "s");
+  if (b[3]) parts.push("高级 " + b[3] + "s");
+  return parts.length ? parts.join(" · ") : "9×9 / 16×16 / 30×16";
+}
+function nonoProgress() {
+  const s = readJSON("nonogram_v1");
+  const n = s.done ? Object.keys(s.done).length : 0;
+  return "29 幅像素画" + (n ? " · 已拼出 " + n : " · 完成揭晓图案");
+}
+
 /* ---------- 图标 ---------- */
 function makeIcon(draw) {
   const c = document.createElement("canvas");
@@ -195,6 +219,30 @@ const icons = {
       if (lit) { g.fillStyle = PAL[1]; g.fillRect(px + 3, py + 3, 3, 3); }
     }
   }),
+  simon: makeIcon(g => { // 菱形四键
+    [[15, 3], [27, 15], [15, 27], [3, 15]].forEach(([x, y], i) => {
+      g.fillStyle = PAL[3]; g.fillRect(x - 1, y - 1, 12, 12);
+      g.fillStyle = i === 0 ? PAL[0] : PAL[2]; g.fillRect(x, y, 10, 10);
+    });
+    g.fillStyle = PAL[3]; g.fillRect(16, 16, 8, 8);
+  }),
+  guess: makeIcon(g => { // 1A2B
+    drawText(g, "1A", 7, 6, 3, 2);
+    drawText(g, "2B", 13, 22, 2, 2);
+  }),
+  mines: makeIcon(g => { // 地雷
+    g.fillStyle = PAL[3];
+    g.fillRect(14, 14, 12, 12); g.fillRect(18, 10, 4, 20); g.fillRect(10, 18, 20, 4);
+    g.fillRect(11, 11, 3, 3); g.fillRect(26, 11, 3, 3); g.fillRect(11, 26, 3, 3); g.fillRect(26, 26, 3, 3);
+    g.fillStyle = PAL[0]; g.fillRect(17, 17, 3, 3);
+  }),
+  nono: makeIcon(g => { // 数织半成品
+    g.fillStyle = PAL[3];
+    for (let i = 0; i <= 4; i++) { g.fillRect(8, 8 + i * 6, 25, 1); g.fillRect(8 + i * 6, 8, 1, 25); }
+    [[0,0],[1,0],[1,1],[2,1],[2,2],[3,2],[0,3],[3,3]].forEach(([x, y]) => g.fillRect(9 + x * 6, 9 + y * 6, 5, 5));
+    g.fillStyle = PAL[2];
+    g.fillRect(2, 9, 4, 1); g.fillRect(2, 15, 4, 1); g.fillRect(9, 2, 1, 4); g.fillRect(15, 2, 1, 4);
+  }),
 };
 
 /* ---------- 菜单 ---------- */
@@ -203,6 +251,10 @@ const GAMES = [
   { href: "klotski.html", icon: icons.klotski, name: "华容道", en: "KLOTSKI", sub: klotskiProgress },
   { href: "fifteen.html", icon: icons.fifteen, name: "数字华容道", en: "15 PUZZLE", sub: fifteenProgress },
   { href: "lightsout.html", icon: icons.lightsout, name: "关灯游戏", en: "LIGHTS OUT", sub: lightsProgress },
+  { href: "simon.html", icon: icons.simon, name: "记忆序列", en: "SIMON", sub: simonProgress },
+  { href: "guess.html", icon: icons.guess, name: "猜数字", en: "1A2B", sub: guessProgress },
+  { href: "mines.html", icon: icons.mines, name: "扫雷", en: "MINES", sub: minesProgress },
+  { href: "nonogram.html", icon: icons.nono, name: "数织", en: "PICROSS", sub: nonoProgress },
 ];
 let sel = 0;
 const menuEl = document.getElementById("menu");
@@ -247,8 +299,10 @@ document.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   SND.unlock();
   switch (e.key) {
-    case "ArrowUp": case "w": case "W": e.preventDefault(); sel = (sel + GAMES.length - 1) % GAMES.length; SND.nav(); refresh(); break;
-    case "ArrowDown": case "s": case "S": e.preventDefault(); sel = (sel + 1) % GAMES.length; SND.nav(); refresh(); break;
+    case "ArrowUp": case "w": case "W": e.preventDefault(); sel = (sel + GAMES.length - 2) % GAMES.length; SND.nav(); refresh(); break;
+    case "ArrowDown": case "s": case "S": e.preventDefault(); sel = (sel + 2) % GAMES.length; SND.nav(); refresh(); break;
+    case "ArrowLeft": case "a": case "A": e.preventDefault(); sel = (sel + GAMES.length - 1) % GAMES.length; SND.nav(); refresh(); break;
+    case "ArrowRight": case "d": case "D": e.preventDefault(); sel = (sel + 1) % GAMES.length; SND.nav(); refresh(); break;
     case "Enter": case " ": e.preventDefault(); launch(); break;
     case "f": case "F": e.preventDefault(); toggleFullscreen(); break;
     case "m": case "M":

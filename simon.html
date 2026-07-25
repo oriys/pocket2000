@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>记忆序列 · POCKET 2000</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(140% 120% at 50% 38%, #a4c31d 0%, #9bbc0f 55%, #83a40d 100%);
+    color: #0f380f;
+    font-family: "PingFang SC", "Microsoft YaHei", ui-monospace, Menlo, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+  }
+  .screen {
+    position: fixed; inset: 0 0 32px 0;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .hintbar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 32px;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 12px; color: rgba(15,56,15,.72); letter-spacing: .03em;
+    padding: 0 12px; white-space: nowrap; overflow: hidden;
+  }
+  .hintbar b { color: #0f380f; font-weight: 600; }
+  .hintbar .sep { opacity: .45; }
+  @media (max-width: 640px) { .hintbar .keysHint, .hintbar .sep { display: none; } }
+</style>
+</head>
+<body>
+<div class="screen" id="screen"><canvas id="lcd"></canvas></div>
+<div class="hintbar">
+  <span id="status">加载中…</span>
+  <span class="sep">｜</span>
+  <span class="keysHint">看灯闪 → 用 ↑ → ↓ ← 复现 · 任意键开始 · F 全屏 · M 音效 · Esc 菜单</span>
+</div>
+
+<script id="core">
+"use strict";
+/* Simon 引擎（纯逻辑）：序列生成与校验 */
+const SIMON = (() => {
+  function extend(seq, rand) { seq.push((rand() * 4) | 0); return seq; }
+  // 返回 "ok" | "done"(本轮复现完成) | "fail"
+  function judge(seq, inputPos, pad) {
+    if (pad !== seq[inputPos]) return "fail";
+    return inputPos + 1 === seq.length ? "done" : "ok";
+  }
+  return { extend, judge };
+})();
+if (typeof module !== "undefined") module.exports = { SIMON };
+</script>
+
+<script>
+"use strict";
+const PAL = ["#9bbc0f", "#8bac0f", "#306230", "#0f380f"];
+const FONT = {
+  "0":"111101101101111","1":"010110010010111","2":"111001111100111","3":"111001011001111",
+  "4":"101101111001001","5":"111100111001111","6":"111100111101111","7":"111001010010010",
+  "8":"111101111101111","9":"111101111001111",
+  "A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110",
+  "E":"111100110100111","G":"011100101101011","K":"101110100110101","L":"100100100100111",
+  "M":"101111111101101","N":"110101101101101","O":"010101101101010","P":"110101110100100",
+  "R":"110101110110101","S":"011100010001110","T":"111010010010010","U":"101101101101111",
+  "V":"101101101101010","W":"101101111111101","Y":"101101010010010","I":"111010010010111",
+  "F":"111100110100100","H":"101101111101101","X":"101101010101101","J":"001001001101010",
+  "Q":"010101101011001","Z":"111001010100111",
+  " ":"000000000000000",":":"000010000010000","!":"010010010000010",">":"100010001010100",
+  "*":"000101010101000","-":"000000111000000",
+};
+function drawText(g, str, x, y, col, scale) {
+  scale = scale || 1;
+  g.fillStyle = PAL[col];
+  for (const ch of String(str).toUpperCase()) {
+    const bits = FONT[ch] || FONT[" "];
+    for (let i = 0; i < 15; i++) {
+      if (bits[i] === "1") g.fillRect(x + (i % 3) * scale, y + ((i / 3) | 0) * scale, scale, scale);
+    }
+    x += 4 * scale;
+  }
+  return x;
+}
+const textW = (str, scale) => String(str).length * 4 * (scale || 1) - (scale || 1);
+
+/* ---------- 音效：四个方位四个音 ---------- */
+const NOTES = [659.3, 523.3, 392.0, 293.7]; // U R D L
+const SND = (() => {
+  let ctx = null;
+  function ensure() {
+    if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function tone(freq, dur, delay, type, vol) {
+    const c = ensure(); if (!c || game.muted) return;
+    const t0 = c.currentTime + (delay || 0);
+    const o = c.createOscillator(), gn = c.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    gn.gain.setValueAtTime(vol || 0.05, t0);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  return {
+    unlock: ensure,
+    pad(i, dur) { tone(NOTES[i], dur || 0.18, 0, "square", 0.06); },
+    buzz() { tone(90, 0.5, 0, "sawtooth", 0.07); },
+    select() { tone(660, 0.05); },
+    win1() { tone(880, 0.07); tone(1175, 0.09, 0.07); },
+  };
+})();
+
+/* ---------- 存档 ---------- */
+const STORE_KEY = "simon_v1";
+function loadStore() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } }
+function saveStore() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {} }
+const store = loadStore();
+store.best = store.best || 0;
+
+/* ---------- 状态 ---------- */
+const cv = document.getElementById("lcd");
+const g2 = cv.getContext("2d");
+const screenBox = document.getElementById("screen");
+const statusEl = document.getElementById("status");
+
+const game = {
+  phase: "idle",          // idle | show | input | over
+  seq: [],
+  inputPos: 0,
+  flash: -1,              // 正在亮的 pad
+  score: 0,
+  newBest: false,
+  blink: true,
+  muted: (function () { try { return localStorage.getItem("hh_muted") === "1"; } catch (e) { return false; } })(),
+};
+setInterval(() => { game.blink = !game.blink; if (game.phase === "idle" || game.phase === "over") render(); }, 480);
+
+const NW = 176, NH = 190, HUD_H = 14;
+// 四个 pad：菱形排布 U R D L
+const PADS = [
+  { x: 64, y: 22, k: "U", ch: ">" },
+  { x: 112, y: 70, k: "R" },
+  { x: 64, y: 118, k: "D" },
+  { x: 16, y: 70, k: "L" },
+];
+const PAD_S = 48;
+
+function layout() {
+  cv.width = NW; cv.height = NH;
+  const availW = screenBox.clientWidth - 8, availH = screenBox.clientHeight - 8;
+  let scale = Math.min(availW / NW, availH / NH);
+  if (scale >= 1) scale = Math.floor(scale);
+  cv.style.width = NW * scale + "px";
+  cv.style.height = NH * scale + "px";
+}
+
+function roundedRect(x, y, s, col) {
+  g2.fillStyle = PAL[col];
+  g2.fillRect(x + 2, y, s - 4, s);
+  g2.fillRect(x, y + 2, s, s - 4);
+}
+
+function render() {
+  g2.fillStyle = PAL[0];
+  g2.fillRect(0, 0, NW, NH);
+  drawText(g2, "SIMON", 3, 4, 3);
+  const right = "LV" + String(game.score).padStart(2, "0") + " BEST" + String(store.best).padStart(2, "0");
+  drawText(g2, right, NW - textW(right, 1) - 3, 4, 3);
+  g2.fillStyle = PAL[2];
+  g2.fillRect(0, HUD_H - 2, NW, 1);
+
+  for (let i = 0; i < 4; i++) {
+    const p = PADS[i];
+    const y = p.y + HUD_H;
+    roundedRect(p.x - 2, y - 2, PAD_S + 4, 3);
+    roundedRect(p.x, y, PAD_S, game.flash === i ? 0 : 2);
+    if (game.flash === i) {
+      g2.fillStyle = PAL[1];
+      g2.fillRect(p.x + 8, y + 8, PAD_S - 16, PAD_S - 16);
+      g2.fillStyle = PAL[0];
+      g2.fillRect(p.x + 14, y + 14, PAD_S - 28, PAD_S - 28);
+    }
+  }
+  // 中心圆盘
+  const cx = 64, cy = 70 + HUD_H;
+  roundedRect(cx, cy, 48, 3);
+  g2.fillStyle = PAL[game.phase === "input" ? 0 : 1];
+  g2.fillRect(cx + 3, cy + 3, 42, 42);
+  const num = String(game.seq.length || 0);
+  drawText(g2, num, cx + 24 - Math.floor(textW(num, 2) / 2), cy + 17, 3, 2);
+
+  if (game.phase === "idle" && game.blink) {
+    const t = "> PRESS ANY KEY";
+    drawText(g2, t, Math.floor((NW - textW(t, 1)) / 2), NH - 10, 3);
+  }
+  if (game.phase === "show") {
+    const t = "WATCH...";
+    drawText(g2, t, Math.floor((NW - textW(t, 1)) / 2), NH - 10, 2);
+  }
+  if (game.phase === "input") {
+    const t = "YOUR TURN " + game.inputPos + "/" + game.seq.length;
+    drawText(g2, t, Math.floor((NW - textW(t, 1)) / 2), NH - 10, 2);
+  }
+  if (game.phase === "over") {
+    const t = "LEN " + game.score + (game.newBest ? " *BEST*" : "");
+    drawText(g2, t, Math.floor((NW - textW(t, 1)) / 2), NH - 21, 3);
+    if (game.blink) {
+      const t2 = "> ANY KEY RETRY";
+      drawText(g2, t2, Math.floor((NW - textW(t2, 1)) / 2), NH - 10, 2);
+    }
+  }
+}
+
+function updateStatus() {
+  statusEl.innerHTML = "<b>记忆序列</b> · 当前 " + game.score + " · 最长 <b>" + store.best + "</b>" +
+    (game.muted ? " · 已静音" : "");
+}
+
+/* ---------- 流程 ---------- */
+let timers = [];
+function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+function after(ms, fn) { timers.push(setTimeout(fn, ms)); }
+
+function startGame() {
+  clearTimers();
+  game.seq = [];
+  game.score = 0;
+  game.newBest = false;
+  nextRound();
+}
+
+function nextRound() {
+  SIMON.extend(game.seq, Math.random);
+  game.phase = "show";
+  game.inputPos = 0;
+  render(); updateStatus();
+  const on = Math.max(160, 420 - game.seq.length * 12);
+  const gap = Math.max(70, 130 - game.seq.length * 3);
+  game.seq.forEach((pad, i) => {
+    after(400 + i * (on + gap), () => { game.flash = pad; SND.pad(pad, on / 1000); render(); });
+    after(400 + i * (on + gap) + on, () => { game.flash = -1; render(); });
+  });
+  after(400 + game.seq.length * (on + gap) + 60, () => {
+    game.phase = "input";
+    render();
+  });
+}
+
+function pressPad(pad) {
+  if (game.phase !== "input") return;
+  game.flash = pad;
+  SND.pad(pad, 0.15);
+  render();
+  after(140, () => { game.flash = -1; render(); });
+  const r = SIMON.judge(game.seq, game.inputPos, pad);
+  if (r === "fail") {
+    game.phase = "over";
+    game.score = game.seq.length - 1;
+    if (game.score > store.best) { store.best = game.score; game.newBest = true; saveStore(); }
+    SND.buzz();
+    // 亮出正确的 pad
+    after(500, () => { game.flash = game.seq[game.inputPos]; render(); });
+    after(1100, () => { game.flash = -1; render(); updateStatus(); });
+    render(); updateStatus();
+    return;
+  }
+  if (r === "done") {
+    game.score = game.seq.length;
+    if (game.score > store.best) { store.best = game.score; game.newBest = true; saveStore(); }
+    SND.win1();
+    updateStatus();
+    after(700, nextRound);
+    return;
+  }
+  game.inputPos++;
+  render();
+}
+
+/* ---------- 输入 ---------- */
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+  else {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) req.call(el);
+  }
+}
+["fullscreenchange", "webkitfullscreenchange"].forEach(ev =>
+  document.addEventListener(ev, () => { layout(); render(); }));
+function toggleMute() {
+  game.muted = !game.muted;
+  try { localStorage.setItem("hh_muted", game.muted ? "1" : "0"); } catch (e) {}
+  updateStatus();
+  if (!game.muted) SND.select();
+}
+
+const PAD_KEYS = {
+  ArrowUp: 0, ArrowRight: 1, ArrowDown: 2, ArrowLeft: 3,
+  w: 0, d: 1, s: 2, a: 3, W: 0, D: 1, S: 2, A: 3,
+};
+
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  SND.unlock();
+  switch (e.key) {
+    case "f": case "F": e.preventDefault(); toggleFullscreen(); return;
+    case "m": case "M": e.preventDefault(); toggleMute(); return;
+    case "Escape": e.preventDefault(); if (!isFullscreen()) location.href = "./"; return;
+  }
+  if (game.phase === "idle" || game.phase === "over") {
+    e.preventDefault();
+    SND.select();
+    startGame();
+    return;
+  }
+  const pad = PAD_KEYS[e.key];
+  if (pad !== undefined) { e.preventDefault(); pressPad(pad); }
+});
+
+screenBox.addEventListener("pointerdown", e => {
+  SND.unlock();
+  if (game.phase === "idle" || game.phase === "over") { SND.select(); startGame(); return; }
+  const rect = cv.getBoundingClientRect();
+  const scale = rect.width / NW;
+  const x = (e.clientX - rect.left) / scale, y = (e.clientY - rect.top) / scale - HUD_H;
+  for (let i = 0; i < 4; i++) {
+    const p = PADS[i];
+    if (x >= p.x && x < p.x + PAD_S && y >= p.y && y < p.y + PAD_S) { pressPad(i); return; }
+  }
+});
+
+window.addEventListener("resize", () => { layout(); render(); });
+layout();
+render();
+updateStatus();
+</script>
+</body>
+</html>

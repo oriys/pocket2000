@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>数织 · POCKET 2000</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(140% 120% at 50% 38%, #a4c31d 0%, #9bbc0f 55%, #83a40d 100%);
+    color: #0f380f;
+    font-family: "PingFang SC", "Microsoft YaHei", ui-monospace, Menlo, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+  }
+  .screen {
+    position: fixed; inset: 0 0 32px 0;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .hintbar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 32px;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 12px; color: rgba(15,56,15,.72); letter-spacing: .03em;
+    padding: 0 12px; white-space: nowrap; overflow: hidden;
+  }
+  .hintbar b { color: #0f380f; font-weight: 600; }
+  .hintbar .sep { opacity: .45; }
+  @media (max-width: 720px) { .hintbar .keysHint, .hintbar .sep { display: none; } }
+
+  .modal {
+    position: fixed; inset: 0; z-index: 10;
+    background: rgba(8, 9, 13, .78); backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal[hidden] { display: none; }
+  .panel {
+    width: min(720px, 100%); max-height: 86vh; display: flex; flex-direction: column;
+    background: #1d1f27; border: 1px solid #343741; border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6); overflow: hidden; color: #aeb4c4;
+  }
+  .panel header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; }
+  .panel header h2 { font-size: 15px; color: #d8dce8; font-weight: 600; }
+  .panel header button { border: 0; background: none; color: #7c8396; font-size: 20px; cursor: pointer; padding: 2px 8px; }
+  .grid {
+    overflow-y: auto; padding: 4px 16px 16px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px;
+  }
+  .grid button {
+    border: 1px solid #343741; border-radius: 9px;
+    background: #23252d; color: #aeb4c4; font-size: 12px; padding: 8px 4px 6px;
+    cursor: pointer; font-family: inherit; line-height: 1.3;
+  }
+  .grid button canvas { display: block; margin: 0 auto 5px; background: #9bbc0f; border-radius: 4px; image-rendering: pixelated; }
+  .grid button .q { display: flex; align-items: center; justify-content: center; margin: 0 auto 5px; width: 45px; height: 45px; background: #14161c; border-radius: 4px; font-size: 22px; color: #4a5164; }
+  .grid button small { display: block; font-size: 10px; color: #6d7487; }
+  .grid button.done { background: #24371a; border-color: #4a6d2a; color: #b9e07e; }
+  .grid button.done small { color: #86a45c; }
+  .grid button.cur { outline: 2px solid #a9d64c; outline-offset: 1px; }
+  .panel footer { padding: 10px 16px 14px; font-size: 11px; color: #5b6172; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .panel footer .danger { border: 0; background: none; color: #8a5560; cursor: pointer; font-size: 11px; text-decoration: underline; font-family: inherit; }
+  .panel footer .credit { width: 100%; font-size: 10px; color: #464c5c; }
+</style>
+</head>
+<body>
+<div class="screen" id="screen"><canvas id="lcd"></canvas></div>
+<div class="hintbar">
+  <span id="status">加载中…</span>
+  <span class="sep">｜</span>
+  <span class="keysHint">方向键光标 · 空格 / Z 涂格 · X 打叉 · 鼠标左涂右叉可拖 · 涂错会提示 · R 重开 · N / P 换关 · L 选关 · Esc 菜单</span>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="panel">
+    <header>
+      <h2>选择画作（完成后揭晓图案）</h2>
+      <button id="modalClose" aria-label="关闭">✕</button>
+    </header>
+    <div class="grid" id="grid"></div>
+    <footer>
+      <span id="progressNote"></span>
+      <button class="danger" id="resetProgress">清空全部进度</button>
+      <span class="credit">全部 29 关均经求解器验证：仅凭行列数字即可唯一推出，不需要猜</span>
+    </footer>
+  </div>
+</div>
+
+<script id="core">
+"use strict";
+/* 数织关卡（rows: "0/1" 字符串）与线索计算 */
+const NONO_LEVELS = [{"name":"爱心","w":5,"h":5,"rows":["01010","11111","11111","01110","00100"]},{"name":"十字","w":5,"h":5,"rows":["00100","00100","11111","00100","00100"]},{"name":"小屋","w":5,"h":5,"rows":["00100","01110","11111","01010","01110"]},{"name":"宝石","w":5,"h":5,"rows":["00100","01110","11111","01110","00100"]},{"name":"沙漏","w":5,"h":5,"rows":["11111","01110","00100","01110","11111"]},{"name":"山坡","w":5,"h":5,"rows":["00001","00011","00111","01111","11111"]},{"name":"小旗","w":5,"h":5,"rows":["11110","11110","10000","10000","10000"]},{"name":"上箭头","w":5,"h":5,"rows":["00100","01110","11111","00100","00100"]},{"name":"大爱心","w":10,"h":10,"rows":["0011001100","0111101111","1111111111","1111111111","1111111111","0111111110","0011111100","0001111000","0000110000","0000110000"]},{"name":"小鸭子","w":10,"h":10,"rows":["0001111000","0011111100","0011011100","0011111100","0001111000","0111111100","1111111111","1111111111","0111111110","0011111100"]},{"name":"咖啡杯","w":10,"h":10,"rows":["0011111100","0000000000","0111111100","0111111101","0111111101","0111111101","0111111100","0011111100","0111111110","1111111111"]},{"name":"圣诞树","w":10,"h":10,"rows":["0000110000","0001111000","0011111100","0001111000","0011111100","0111111110","0011111100","0111111110","1111111111","0000110000"]},{"name":"雨伞","w":10,"h":10,"rows":["0000110000","0011111100","0111111110","1111111111","1111111111","0000110000","0000110000","0000110000","0100110000","0011110000"]},{"name":"帆船","w":10,"h":10,"rows":["0000010000","0000110000","0001110000","0011110000","0111110000","1111110000","0000010000","1111111111","0111111110","0011111100"]},{"name":"钥匙","w":10,"h":10,"rows":["0011110000","0110011000","0110011000","0011110000","0001100000","0001100000","0001101100","0001101100","0001111100","0000111000"]},{"name":"音符","w":10,"h":10,"rows":["0000111111","0000111111","0000110011","0000110011","0000110000","0000110000","0011110000","0111110000","0111110000","0011100000"]},{"name":"蘑菇","w":10,"h":10,"rows":["0001111000","0111111110","1111111111","1111111111","1101111011","0011111100","0001111000","0001111000","0011111100","0011111100"]},{"name":"小幽灵","w":10,"h":10,"rows":["0001111000","0011111100","0111111110","0110110110","0111111110","0111111110","0111111110","0111111110","0111111110","0101101010"]},{"name":"皇冠","w":10,"h":10,"rows":["0000000000","1001111001","1101111011","1111111111","1111111111","0111111110","0111111110","0111111110","1111111111","1111111111"]},{"name":"樱桃","w":10,"h":10,"rows":["0000001100","0000011000","0000110000","0111111000","1111111111","1001000010","1001000010","1001000010","0110011010","0000001100"]},{"name":"闹钟","w":10,"h":10,"rows":["0110000110","1111111111","0111111110","0111011100","0111011110","0111011110","0111100110","0111111110","1111111111","0110000110"]},{"name":"眼镜","w":10,"h":10,"rows":["0000000000","0000000000","1110000111","1001001001","1001111001","1001001001","1110000111","0000000000","0000000000","0000000000"]},{"name":"小猫","w":10,"h":10,"rows":["0100000010","0110000110","0111111110","1111111111","1011001101","1111111111","1110110111","0111111110","0011111100","0010110100"]},{"name":"房子","w":10,"h":10,"rows":["0000110000","0001111000","0011111100","0111111110","1111111111","0111111110","0110000110","0110110110","0110110110","0111111110"]},{"name":"飞机","w":10,"h":10,"rows":["0000110000","0000110000","0001111000","0001111000","0111111110","1111111111","0001111000","0001111000","0011111100","0111001110"]},{"name":"小鱼","w":10,"h":10,"rows":["0000000000","0001111001","0111111011","1111111111","1101111111","1111111111","0111111011","0001111001","0000000000","0000000000"]},{"name":"大帆船","w":15,"h":15,"rows":["000000010000000","000000110000000","000001110000000","000011110000000","000111110000000","001111110000000","011111110000000","111111110000000","000000010000000","111111111111111","011111111111110","001111111111100","000111111111000","000011111110000","000000000000000"]},{"name":"城堡","w":15,"h":15,"rows":["100100000010010","111100000011110","111100000011110","011111111111100","011111111111100","011110000111100","011110110111100","011111111111100","011110110111100","011110110111100","011111111111100","011110000111100","011111111111100","111111111111111","111111111111111"]},{"name":"音乐盒","w":15,"h":15,"rows":["000000111100000","000000111100000","000000110110000","000000110011000","000000110001100","000000110000110","001111110000110","011111110011110","011111110111110","001111110111110","000000000111100","000000000000000","111111111111111","101010101010101","111111111111111"]}];
+const NONO = (() => {
+  function cluesOf(line) {
+    const out = [];
+    let run = 0;
+    for (const c of line) {
+      if (c) run++;
+      else if (run) { out.push(run); run = 0; }
+    }
+    if (run) out.push(run);
+    return out;
+  }
+  function parse(level) {
+    const grid = level.rows.map(r => [...r].map(Number));
+    const rowClues = grid.map(cluesOf);
+    const colClues = Array.from({ length: level.w }, (_, x) => cluesOf(grid.map(r => r[x])));
+    const solution = new Set();
+    grid.forEach((row, y) => row.forEach((v, x) => { if (v) solution.add(y * level.w + x); }));
+    return { grid, rowClues, colClues, solution };
+  }
+  return { cluesOf, parse };
+})();
+if (typeof module !== "undefined") module.exports = { NONO_LEVELS, NONO };
+</script>
+
+<script>
+"use strict";
+const PAL = ["#9bbc0f", "#8bac0f", "#306230", "#0f380f"];
+const FONT = {
+  "0":"111101101101111","1":"010110010010111","2":"111001111100111","3":"111001011001111",
+  "4":"101101111001001","5":"111100111001111","6":"111100111101111","7":"111001010010010",
+  "8":"111101111101111","9":"111101111001111",
+  "A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110",
+  "E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101",
+  "I":"111010010010111","K":"101110100110101","L":"100100100100111","M":"101111111101101",
+  "N":"110101101101101","O":"010101101101010","P":"110101110100100","R":"110101110110101",
+  "S":"011100010001110","T":"111010010010010","U":"101101101101111","V":"101101101101010",
+  "W":"101101111111101","X":"101101010101101","Y":"101101010010010","Z":"111001010100111",
+  "J":"001001001101010","Q":"010101101011001",
+  " ":"000000000000000",":":"000010000010000","!":"010010010000010",">":"100010001010100",
+  "*":"000101010101000","-":"000000111000000",
+};
+function drawText(g, str, x, y, col, scale) {
+  scale = scale || 1;
+  g.fillStyle = PAL[col];
+  for (const ch of String(str).toUpperCase()) {
+    const bits = FONT[ch] || FONT[" "];
+    for (let i = 0; i < 15; i++) {
+      if (bits[i] === "1") g.fillRect(x + (i % 3) * scale, y + ((i / 3) | 0) * scale, scale, scale);
+    }
+    x += 4 * scale;
+  }
+  return x;
+}
+const textW = (str, scale) => String(str).length * 4 * (scale || 1) - (scale || 1);
+
+const SND = (() => {
+  let ctx = null;
+  function ensure() {
+    if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function tone(freq, dur, delay, type, vol) {
+    const c = ensure(); if (!c || game.muted) return;
+    const t0 = c.currentTime + (delay || 0);
+    const o = c.createOscillator(), gn = c.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    gn.gain.setValueAtTime(vol || 0.04, t0);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  return {
+    unlock: ensure,
+    cursor(){ tone(880, 0.02, 0, "square", 0.02); },
+    fill()  { tone(620, 0.04); },
+    mark()  { tone(430, 0.035); },
+    unmark(){ tone(360, 0.03); },
+    miss()  { tone(120, 0.25, 0, "sawtooth", 0.07); },
+    line()  { tone(780, 0.05); tone(990, 0.06, 0.05); },
+    bump()  { tone(100, 0.05, 0, "sawtooth", 0.04); },
+    win()   { [523, 659, 784, 988, 1319, 1568].forEach((f, i) => tone(f, 0.15, i * 0.1, "square", 0.05)); },
+  };
+})();
+
+const STORE_KEY = "nonogram_v1";
+function loadStore() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } }
+function saveStore() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {} }
+const store = loadStore();
+store.done = store.done || {};      // done[idx] = [seconds, mistakes]
+if (!(store.pos >= 0 && store.pos < NONO_LEVELS.length)) store.pos = 0;
+
+const cv = document.getElementById("lcd");
+const g2 = cv.getContext("2d");
+const screenBox = document.getElementById("screen");
+const statusEl = document.getElementById("status");
+
+const T = 16;
+const game = {
+  idx: 0, lv: null, P: null,
+  fills: new Set(), marks: new Set(),
+  mistakes: 0, seconds: 0, started: false,
+  cx: 0, cy: 0,
+  won: false, blink: true, cursorOn: true,
+  clueW: 40, clueH: 30,
+  muted: (function () { try { return localStorage.getItem("hh_muted") === "1"; } catch (e) { return false; } })(),
+};
+setInterval(() => {
+  if (game.started && !game.won) { game.seconds++; renderHud(); }
+}, 1000);
+setInterval(() => { game.cursorOn = !game.cursorOn; game.blink = !game.blink; render(); }, 420);
+
+function loadLevel(idx) {
+  game.idx = ((idx % NONO_LEVELS.length) + NONO_LEVELS.length) % NONO_LEVELS.length;
+  game.lv = NONO_LEVELS[game.idx];
+  game.P = NONO.parse(game.lv);
+  game.fills = new Set();
+  game.marks = new Set();
+  game.mistakes = 0;
+  game.seconds = 0;
+  game.started = false;
+  game.cx = 0; game.cy = 0;
+  game.won = false;
+  store.pos = game.idx; saveStore();
+  // 线索区尺寸
+  game.clueW = Math.max(...game.P.rowClues.map(c => textW(c.join(" ") || "0", 1))) + 8;
+  game.clueH = Math.max(...game.P.colClues.map(c => c.length || 1)) * 7 + 6;
+  layout(); render(); updateStatus();
+}
+
+function updateStatus() {
+  const solvedN = Object.keys(store.done).length;
+  statusEl.innerHTML = "<b>数织</b> · 第 " + (game.idx + 1) + " / " + NONO_LEVELS.length + " 关 (" +
+    game.lv.w + "×" + game.lv.h + ")" +
+    (store.done[game.idx] ? " · 已完成:" + game.lv.name : "") +
+    " · 已拼出 <b>" + solvedN + "</b> 幅" +
+    (game.muted ? " · 已静音" : "");
+}
+
+/* ---------- 渲染 ---------- */
+function nativeSize() {
+  return [Math.max(game.clueW + game.lv.w * T + 6, 130), 14 + game.clueH + game.lv.h * T + 6];
+}
+function layout() {
+  const [nw, nh] = nativeSize();
+  cv.width = nw; cv.height = nh;
+  const availW = screenBox.clientWidth - 8, availH = screenBox.clientHeight - 8;
+  let scale = Math.min(availW / nw, availH / nh);
+  if (scale >= 1) scale = Math.floor(scale);
+  cv.style.width = nw * scale + "px";
+  cv.style.height = nh * scale + "px";
+}
+
+function lineDone(kind, i) {
+  // 该行/列已填数 == 解中该行/列格数（只可能填对）
+  const { solution } = game.P;
+  const w = game.lv.w, h = game.lv.h;
+  let need = 0, have = 0;
+  if (kind === "r") {
+    for (let x = 0; x < w; x++) { const k = i * w + x; if (solution.has(k)) need++; if (game.fills.has(k)) have++; }
+  } else {
+    for (let y = 0; y < h; y++) { const k = y * w + i; if (solution.has(k)) need++; if (game.fills.has(k)) have++; }
+  }
+  return need === have;
+}
+
+function renderHud() {
+  const [nw] = nativeSize();
+  g2.fillStyle = PAL[0];
+  g2.fillRect(0, 0, nw, 12);
+  drawText(g2, "LV" + String(game.idx + 1).padStart(2, "0"), 3, 4, 3);
+  const mid = game.lv.w + "X" + game.lv.h;
+  drawText(g2, mid, Math.floor((nw - textW(mid, 1)) / 2), 4, 2);
+  const right = "T" + String(Math.min(999, game.seconds)).padStart(3, "0") + " X" + game.mistakes;
+  drawText(g2, right, nw - textW(right, 1) - 3, 4, 3);
+  g2.fillStyle = PAL[2];
+  g2.fillRect(0, 12, nw, 1);
+}
+
+function render() {
+  const [nw, nh] = nativeSize();
+  const w = game.lv.w, h = game.lv.h;
+  const ox = game.clueW, oy = 14 + game.clueH;
+  g2.fillStyle = PAL[0];
+  g2.fillRect(0, 0, nw, nh);
+  renderHud();
+
+  // 线索
+  game.P.rowClues.forEach((c, y) => {
+    const s = c.join(" ") || "0";
+    drawText(g2, s, ox - textW(s, 1) - 4, oy + y * T + 5, lineDone("r", y) ? 1 : 3);
+  });
+  game.P.colClues.forEach((c, x) => {
+    const arr = c.length ? c : [0];
+    const dim = lineDone("c", x);
+    arr.forEach((n, i) => {
+      const s = String(n);
+      const yy = oy - 4 - (arr.length - i) * 7 + 7 - 5;
+      drawText(g2, s, ox + x * T + Math.floor((T - textW(s, 1)) / 2), yy, dim ? 1 : 3);
+    });
+  });
+
+  // 棋盘
+  g2.fillStyle = PAL[3];
+  g2.fillRect(ox - 2, oy - 2, w * T + 4, h * T + 4);
+  g2.fillStyle = PAL[0];
+  g2.fillRect(ox, oy, w * T, h * T);
+  g2.fillStyle = PAL[1];
+  for (let x = 1; x < w; x++) g2.fillRect(ox + x * T, oy, 1, h * T);
+  for (let y = 1; y < h; y++) g2.fillRect(ox, oy + y * T, w * T, 1);
+  g2.fillStyle = PAL[2];
+  for (let x = 5; x < w; x += 5) g2.fillRect(ox + x * T, oy, 1, h * T);
+  for (let y = 5; y < h; y += 5) g2.fillRect(ox, oy + y * T, w * T, 1);
+
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const k = y * w + x;
+    const px = ox + x * T, py = oy + y * T;
+    if (game.fills.has(k)) {
+      g2.fillStyle = PAL[3];
+      g2.fillRect(px + 1, py + 1, T - 1, T - 1);
+    } else if (game.marks.has(k)) {
+      g2.fillStyle = PAL[2];
+      for (let d = 0; d < 6; d++) {
+        g2.fillRect(px + 5 + d, py + 5 + d, 1, 1);
+        g2.fillRect(px + 10 - d, py + 5 + d, 1, 1);
+      }
+    }
+  }
+
+  // 光标
+  if (!game.won && game.cursorOn) {
+    const px = ox + game.cx * T, py = oy + game.cy * T;
+    g2.fillStyle = game.fills.has(game.cy * w + game.cx) ? PAL[0] : PAL[3];
+    g2.fillRect(px, py, T, 2); g2.fillRect(px, py + T - 2, T, 2);
+    g2.fillRect(px, py, 2, T); g2.fillRect(px + T - 2, py, 2, T);
+  }
+
+  if (game.won) {
+    const t = game.lv.name;
+    const bw = Math.max(textW(t, 1) + 20, 90), bh = 32;
+    const bx = Math.floor((nw - bw) / 2), by = nh - bh - 3;
+    g2.fillStyle = PAL[0]; g2.fillRect(bx, by, bw, bh);
+    g2.fillStyle = PAL[3];
+    g2.fillRect(bx, by, bw, 1); g2.fillRect(bx, by + bh - 1, bw, 1);
+    g2.fillRect(bx, by, 1, bh); g2.fillRect(bx + bw - 1, by, 1, bh);
+    let s = "T" + game.seconds + " X" + game.mistakes;
+    drawText(g2, s, Math.floor((nw - textW(s, 1)) / 2), by + 5, 2);
+    if (game.blink) {
+      s = "> ANY KEY NEXT";
+      drawText(g2, s, Math.floor((nw - textW(s, 1)) / 2), by + 15, 2);
+    }
+    // 图案名用系统字提示在状态栏，画布上仅显示英文数据
+  }
+}
+
+/* ---------- 操作 ---------- */
+function doFill(k) {
+  if (game.won || game.fills.has(k)) return;
+  if (game.marks.has(k)) { SND.bump(); return; }
+  game.started = true;
+  if (game.P.solution.has(k)) {
+    game.fills.add(k);
+    const y = (k / game.lv.w) | 0, x = k % game.lv.w;
+    if (lineDone("r", y) || lineDone("c", x)) SND.line(); else SND.fill();
+    if (game.fills.size === game.P.solution.size) handleWin();
+  } else {
+    game.marks.add(k);
+    game.mistakes++;
+    SND.miss();
+  }
+  render(); renderHud();
+}
+
+function doMark(k) {
+  if (game.won || game.fills.has(k)) return;
+  game.started = true;
+  if (game.marks.has(k)) { game.marks.delete(k); SND.unmark(); }
+  else { game.marks.add(k); SND.mark(); }
+  render();
+}
+
+function handleWin() {
+  game.won = true;
+  const prev = store.done[game.idx];
+  if (!prev || game.seconds < prev[0]) store.done[game.idx] = [game.seconds, game.mistakes];
+  saveStore();
+  SND.win();
+  updateStatus();
+}
+
+function nextUnsolved() {
+  for (let d = 1; d <= NONO_LEVELS.length; d++) {
+    const i = (game.idx + d) % NONO_LEVELS.length;
+    if (!store.done[i]) return i;
+  }
+  return (game.idx + 1) % NONO_LEVELS.length;
+}
+
+/* ---------- 输入 ---------- */
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+  else {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) req.call(el);
+  }
+}
+["fullscreenchange", "webkitfullscreenchange"].forEach(ev =>
+  document.addEventListener(ev, () => { layout(); render(); }));
+function toggleMute() {
+  game.muted = !game.muted;
+  try { localStorage.setItem("hh_muted", game.muted ? "1" : "0"); } catch (e) {}
+  updateStatus();
+  if (!game.muted) SND.fill();
+}
+
+const CUR = {
+  ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+  w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0], W: [0, -1], S: [0, 1], A: [-1, 0], D: [1, 0],
+};
+
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  SND.unlock();
+  if (!modal.hidden) {
+    if (e.key === "Escape" || e.key === "l" || e.key === "L") { closeModal(); e.preventDefault(); }
+    return;
+  }
+  if (game.won) {
+    e.preventDefault();
+    if (e.key === "f" || e.key === "F") { toggleFullscreen(); return; }
+    if (e.key === "m" || e.key === "M") { toggleMute(); return; }
+    if (e.key === "Escape") { if (!isFullscreen()) location.href = "./"; return; }
+    if (e.key === "l" || e.key === "L") { openModal(); return; }
+    if (e.key === "p" || e.key === "P") loadLevel(game.idx - 1); else loadLevel(nextUnsolved());
+    return;
+  }
+  const d = CUR[e.key];
+  if (d) {
+    e.preventDefault();
+    game.cx = Math.min(game.lv.w - 1, Math.max(0, game.cx + d[0]));
+    game.cy = Math.min(game.lv.h - 1, Math.max(0, game.cy + d[1]));
+    game.cursorOn = true;
+    SND.cursor();
+    render();
+    return;
+  }
+  const k = game.cy * game.lv.w + game.cx;
+  switch (e.key) {
+    case " ": case "z": case "Z": case "Enter": e.preventDefault(); doFill(k); break;
+    case "x": case "X": e.preventDefault(); doMark(k); break;
+    case "r": case "R": e.preventDefault(); SND.mark(); loadLevel(game.idx); break;
+    case "n": case "N": case "]": e.preventDefault(); SND.mark(); loadLevel(game.idx + 1); break;
+    case "p": case "P": case "[": e.preventDefault(); SND.mark(); loadLevel(game.idx - 1); break;
+    case "l": case "L": e.preventDefault(); openModal(); break;
+    case "f": case "F": e.preventDefault(); toggleFullscreen(); break;
+    case "m": case "M": e.preventDefault(); toggleMute(); break;
+    case "Escape": e.preventDefault(); if (!isFullscreen()) location.href = "./"; break;
+  }
+});
+
+/* 鼠标/触屏：左键涂，右键叉，可拖动连画 */
+(() => {
+  let mode = 0; // 1=fill 2=mark
+  let lastK = -1;
+  function cellFrom(e) {
+    const rect = cv.getBoundingClientRect();
+    const [nw] = nativeSize();
+    const scale = rect.width / nw;
+    const x = Math.floor(((e.clientX - rect.left) / scale - game.clueW) / T);
+    const y = Math.floor(((e.clientY - rect.top) / scale - 14 - game.clueH) / T);
+    if (x < 0 || y < 0 || x >= game.lv.w || y >= game.lv.h) return -1;
+    return y * game.lv.w + x;
+  }
+  screenBox.addEventListener("pointerdown", e => {
+    SND.unlock();
+    if (game.won) { loadLevel(nextUnsolved()); return; }
+    const k = cellFrom(e);
+    if (k < 0) return;
+    game.cx = k % game.lv.w; game.cy = (k / game.lv.w) | 0;
+    mode = e.button === 2 ? 2 : 1;
+    lastK = k;
+    if (mode === 1) doFill(k); else doMark(k);
+    screenBox.setPointerCapture(e.pointerId);
+  });
+  screenBox.addEventListener("pointermove", e => {
+    if (!mode) return;
+    const k = cellFrom(e);
+    if (k < 0 || k === lastK) return;
+    lastK = k;
+    game.cx = k % game.lv.w; game.cy = (k / game.lv.w) | 0;
+    if (mode === 1) doFill(k);
+    else if (!game.marks.has(k) && !game.fills.has(k)) doMark(k);
+  });
+  const up = () => { mode = 0; lastK = -1; };
+  screenBox.addEventListener("pointerup", up);
+  screenBox.addEventListener("pointercancel", up);
+  screenBox.addEventListener("contextmenu", e => e.preventDefault());
+})();
+
+/* ---------- 选关面板 ---------- */
+const modal = document.getElementById("modal");
+const gridEl = document.getElementById("grid");
+
+function makeArtThumb(idx) {
+  const lv = NONO_LEVELS[idx];
+  const s = Math.max(2, Math.floor(45 / Math.max(lv.w, lv.h)));
+  const c = document.createElement("canvas");
+  c.width = lv.w * s + 2; c.height = lv.h * s + 2;
+  const g = c.getContext("2d");
+  g.fillStyle = "#9bbc0f"; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = "#0f380f";
+  lv.rows.forEach((row, y) => [...row].forEach((v, x) => {
+    if (v === "1") g.fillRect(x * s + 1, y * s + 1, s, s);
+  }));
+  return c;
+}
+
+function openModal() {
+  if (isFullscreen()) toggleFullscreen();
+  renderModal();
+  modal.hidden = false;
+}
+function closeModal() { modal.hidden = true; }
+
+function renderModal() {
+  gridEl.innerHTML = "";
+  NONO_LEVELS.forEach((lv, i) => {
+    const b = document.createElement("button");
+    const done = store.done[i];
+    if (done) {
+      b.appendChild(makeArtThumb(i));
+    } else {
+      const q = document.createElement("div");
+      q.className = "q";
+      q.textContent = "?";
+      b.appendChild(q);
+    }
+    const t = document.createElement("div");
+    t.textContent = done ? lv.name : "第 " + (i + 1) + " 关";
+    b.appendChild(t);
+    const sm = document.createElement("small");
+    sm.textContent = lv.w + "×" + lv.h + (done ? " · " + done[0] + "s" : "");
+    b.appendChild(sm);
+    if (done) b.classList.add("done");
+    if (i === game.idx) b.classList.add("cur");
+    b.addEventListener("click", () => { SND.mark(); closeModal(); loadLevel(i); });
+    gridEl.appendChild(b);
+  });
+  document.getElementById("progressNote").textContent =
+    "已拼出 " + Object.keys(store.done).length + " / " + NONO_LEVELS.length + " 幅";
+}
+document.getElementById("modalClose").addEventListener("click", closeModal);
+modal.addEventListener("click", e => { if (e.target === modal) closeModal(); });
+document.getElementById("resetProgress").addEventListener("click", () => {
+  if (confirm("确定清空数织的全部进度吗？拼出的画会重新变成问号。")) {
+    store.done = {}; saveStore(); renderModal(); updateStatus();
+  }
+});
+
+/* ---------- 启动 ---------- */
+window.addEventListener("resize", () => { layout(); render(); });
+loadLevel(store.pos);
+</script>
+</body>
+</html>

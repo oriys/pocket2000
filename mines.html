@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>扫雷 · POCKET 2000</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(140% 120% at 50% 38%, #a4c31d 0%, #9bbc0f 55%, #83a40d 100%);
+    color: #0f380f;
+    font-family: "PingFang SC", "Microsoft YaHei", ui-monospace, Menlo, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+  }
+  .screen {
+    position: fixed; inset: 0 0 32px 0;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .hintbar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 32px;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 12px; color: rgba(15,56,15,.72); letter-spacing: .03em;
+    padding: 0 12px; white-space: nowrap; overflow: hidden;
+  }
+  .hintbar b { color: #0f380f; font-weight: 600; }
+  .hintbar .sep { opacity: .45; }
+  @media (max-width: 720px) { .hintbar .keysHint, .hintbar .sep { display: none; } }
+</style>
+</head>
+<body>
+<div class="screen" id="screen"><canvas id="lcd"></canvas></div>
+<div class="hintbar">
+  <span id="status">加载中…</span>
+  <span class="sep">｜</span>
+  <span class="keysHint">方向键光标 · 空格 / Z 翻开（数字上=清算） · X 插旗 · 鼠标左翻右旗 · 1/2/3 难度 · R 重开 · Esc 菜单</span>
+</div>
+
+<script id="core">
+"use strict";
+/* 扫雷引擎（纯逻辑）：格子编号 i = y*w + x */
+const MINES = (() => {
+  function adj(w, h, i) {
+    const x = i % w, y = (i / w) | 0, out = [];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < w && ny < h) out.push(ny * w + nx);
+    }
+    return out;
+  }
+  // 生成雷区：首点及其邻域必无雷（密度允许时）
+  function gen(w, h, m, safe, rand) {
+    const banned = new Set([safe, ...adj(w, h, safe)]);
+    const pool = [];
+    for (let i = 0; i < w * h; i++) if (!banned.has(i)) pool.push(i);
+    if (pool.length < m) { // 密度太高时只保证首点无雷
+      pool.length = 0;
+      for (let i = 0; i < w * h; i++) if (i !== safe) pool.push(i);
+    }
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = (rand() * (i + 1)) | 0;
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return new Set(pool.slice(0, m));
+  }
+  function counts(w, h, mines) {
+    const c = new Array(w * h).fill(0);
+    for (let i = 0; i < w * h; i++) {
+      if (mines.has(i)) { c[i] = -1; continue; }
+      for (const n of adj(w, h, i)) if (mines.has(n)) c[i]++;
+    }
+    return c;
+  }
+  // 翻开 i（含零区泛洪）；返回新翻开的编号数组；踩雷返回 null
+  function reveal(w, h, mines, cnt, revealed, flagged, i) {
+    if (revealed.has(i) || flagged.has(i)) return [];
+    if (mines.has(i)) return null;
+    const out = [];
+    const q = [i];
+    revealed.add(i); out.push(i);
+    while (q.length) {
+      const cur = q.pop();
+      if (cnt[cur] !== 0) continue;
+      for (const n of adj(w, h, cur)) {
+        if (revealed.has(n) || flagged.has(n) || mines.has(n)) continue;
+        revealed.add(n); out.push(n); q.push(n);
+      }
+    }
+    return out;
+  }
+  return { adj, gen, counts, reveal };
+})();
+if (typeof module !== "undefined") module.exports = { MINES };
+</script>
+
+<script>
+"use strict";
+const PAL = ["#9bbc0f", "#8bac0f", "#306230", "#0f380f"];
+const FONT = {
+  "0":"111101101101111","1":"010110010010111","2":"111001111100111","3":"111001011001111",
+  "4":"101101111001001","5":"111100111001111","6":"111100111101111","7":"111001010010010",
+  "8":"111101111101111","9":"111101111001111",
+  "A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110",
+  "E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101",
+  "I":"111010010010111","K":"101110100110101","L":"100100100100111","M":"101111111101101",
+  "N":"110101101101101","O":"010101101101010","P":"110101110100100","R":"110101110110101",
+  "S":"011100010001110","T":"111010010010010","U":"101101101101111","V":"101101101101010",
+  "W":"101101111111101","X":"101101010101101","Y":"101101010010010","Z":"111001010100111",
+  "J":"001001001101010","Q":"010101101011001",
+  " ":"000000000000000",":":"000010000010000","!":"010010010000010",">":"100010001010100",
+  "*":"000101010101000","-":"000000111000000",
+};
+function drawText(g, str, x, y, col, scale) {
+  scale = scale || 1;
+  g.fillStyle = PAL[col];
+  for (const ch of String(str).toUpperCase()) {
+    const bits = FONT[ch] || FONT[" "];
+    for (let i = 0; i < 15; i++) {
+      if (bits[i] === "1") g.fillRect(x + (i % 3) * scale, y + ((i / 3) | 0) * scale, scale, scale);
+    }
+    x += 4 * scale;
+  }
+  return x;
+}
+const textW = (str, scale) => String(str).length * 4 * (scale || 1) - (scale || 1);
+
+const SND = (() => {
+  let ctx = null;
+  function ensure() {
+    if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function tone(freq, dur, delay, type, vol) {
+    const c = ensure(); if (!c || game.muted) return;
+    const t0 = c.currentTime + (delay || 0);
+    const o = c.createOscillator(), gn = c.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    gn.gain.setValueAtTime(vol || 0.04, t0);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  return {
+    unlock: ensure,
+    cursor(){ tone(880, 0.02, 0, "square", 0.025); },
+    open()  { tone(620, 0.04); },
+    flood() { tone(520, 0.03); tone(620, 0.03, 0.03); },
+    flag()  { tone(980, 0.05); },
+    unflag(){ tone(700, 0.04); },
+    boom()  { tone(70, 0.6, 0, "sawtooth", 0.09); tone(50, 0.7, 0.05, "square", 0.07); },
+    bump()  { tone(100, 0.05, 0, "sawtooth", 0.04); },
+    win()   { [523, 659, 784, 988, 1319].forEach((f, i) => tone(f, 0.14, i * 0.1, "square", 0.05)); },
+  };
+})();
+
+const STORE_KEY = "mines_v1";
+function loadStore() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } }
+function saveStore() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {} }
+const store = loadStore();
+store.best = store.best || {};       // best[diff] = seconds
+if (![1, 2, 3].includes(store.diff)) store.diff = 1;
+
+const DIFFS = {
+  1: { w: 9, h: 9, m: 10, tag: "9X9" },
+  2: { w: 16, h: 16, m: 40, tag: "16X16" },
+  3: { w: 30, h: 16, m: 99, tag: "30X16" },
+};
+const T = 16, HUD_H = 14, PAD = 4;
+
+const cv = document.getElementById("lcd");
+const g2 = cv.getContext("2d");
+const screenBox = document.getElementById("screen");
+const statusEl = document.getElementById("status");
+
+const game = {
+  diff: store.diff,
+  w: 9, h: 9, m: 10,
+  mines: new Set(),
+  cnt: [],
+  revealed: new Set(),
+  flagged: new Set(),
+  started: false,       // 首次翻开后才布雷
+  seconds: 0,
+  cx: 4, cy: 4,
+  over: false, won: false,
+  boomAt: -1,
+  newBest: false,
+  blink: true,
+  cursorOn: true,
+  muted: (function () { try { return localStorage.getItem("hh_muted") === "1"; } catch (e) { return false; } })(),
+};
+setInterval(() => {
+  if (game.started && !game.over && !game.won) { game.seconds++; renderHud(); }
+}, 1000);
+setInterval(() => { game.cursorOn = !game.cursorOn; game.blink = !game.blink; render(); }, 420);
+
+function newGame(diff) {
+  const d = DIFFS[diff];
+  game.diff = diff;
+  store.diff = diff; saveStore();
+  game.w = d.w; game.h = d.h; game.m = d.m;
+  game.mines = new Set();
+  game.cnt = new Array(d.w * d.h).fill(0);
+  game.revealed = new Set();
+  game.flagged = new Set();
+  game.started = false;
+  game.seconds = 0;
+  game.cx = (d.w / 2) | 0; game.cy = (d.h / 2) | 0;
+  game.over = false; game.won = false;
+  game.boomAt = -1;
+  game.newBest = false;
+  layout(); render(); updateStatus();
+}
+
+function updateStatus() {
+  const b = store.best[game.diff];
+  statusEl.innerHTML = "<b>扫雷</b> · " + DIFFS[game.diff].tag.toLowerCase() + " · " + game.m + " 雷" +
+    (b ? " · 最快 <b>" + b + "</b> 秒" : "") +
+    (game.muted ? " · 已静音" : "");
+}
+
+/* ---------- 渲染 ---------- */
+function nativeSize() {
+  return [game.w * T + PAD * 2, game.h * T + PAD * 2 + HUD_H];
+}
+function layout() {
+  const [nw, nh] = nativeSize();
+  cv.width = nw; cv.height = nh;
+  const availW = screenBox.clientWidth - 8, availH = screenBox.clientHeight - 8;
+  let scale = Math.min(availW / nw, availH / nh);
+  if (scale >= 1) scale = Math.floor(scale);
+  cv.style.width = nw * scale + "px";
+  cv.style.height = nh * scale + "px";
+}
+
+function drawCell(i) {
+  const x = PAD + (i % game.w) * T, y = HUD_H + 2 + ((i / game.w) | 0) * T;
+  const isRev = game.revealed.has(i);
+  if (!isRev) {
+    g2.fillStyle = PAL[1]; g2.fillRect(x, y, T, T);
+    g2.fillStyle = PAL[0]; g2.fillRect(x, y, T, 2); g2.fillRect(x, y, 2, T);
+    g2.fillStyle = PAL[2]; g2.fillRect(x, y + T - 2, T, 2); g2.fillRect(x + T - 2, y, 2, T);
+    if (game.flagged.has(i)) {
+      g2.fillStyle = PAL[3];
+      g2.fillRect(x + 7, y + 3, 2, 10);
+      g2.fillRect(x + 5, y + 12, 7, 2);
+      g2.fillRect(x + 9, y + 3, 4, 2); g2.fillRect(x + 9, y + 5, 3, 2);
+      if (game.over && !game.mines.has(i)) { // 错旗
+        g2.fillStyle = PAL[2];
+        for (let k = 0; k < 10; k++) { g2.fillRect(x + 3 + k, y + 3 + k, 1, 1); g2.fillRect(x + 12 - k, y + 3 + k, 1, 1); }
+      }
+    } else if (game.over && game.mines.has(i)) {
+      drawMine(x, y, false);
+    }
+    return;
+  }
+  g2.fillStyle = i === game.boomAt ? PAL[2] : PAL[0];
+  g2.fillRect(x, y, T, T);
+  g2.fillStyle = PAL[1];
+  g2.fillRect(x, y, T, 1); g2.fillRect(x, y, 1, T);
+  if (game.mines.has(i)) { drawMine(x, y, i === game.boomAt); return; }
+  const n = game.cnt[i];
+  if (n > 0) {
+    const s = String(n);
+    drawText(g2, s, x + 6, y + 5, n === 1 ? 2 : 3);
+  }
+}
+
+function drawMine(x, y, boom) {
+  g2.fillStyle = PAL[3];
+  g2.fillRect(x + 5, y + 5, 6, 6);
+  g2.fillRect(x + 7, y + 3, 2, 10);
+  g2.fillRect(x + 3, y + 7, 10, 2);
+  g2.fillRect(x + 4, y + 4, 2, 2); g2.fillRect(x + 10, y + 4, 2, 2);
+  g2.fillRect(x + 4, y + 10, 2, 2); g2.fillRect(x + 10, y + 10, 2, 2);
+  if (boom) { g2.fillStyle = PAL[0]; g2.fillRect(x + 7, y + 7, 2, 2); }
+}
+
+function renderHud() {
+  const [nw] = nativeSize();
+  g2.fillStyle = PAL[0];
+  g2.fillRect(0, 0, nw, HUD_H - 2);
+  const left = "M" + String(game.m - game.flagged.size).padStart(3, "0");
+  drawText(g2, left, 3, 4, 3);
+  const tag = DIFFS[game.diff].tag;
+  drawText(g2, tag, Math.floor((nw - textW(tag, 1)) / 2), 4, 2);
+  const right = "T" + String(Math.min(999, game.seconds)).padStart(3, "0");
+  drawText(g2, right, nw - textW(right, 1) - 3, 4, 3);
+  g2.fillStyle = PAL[2];
+  g2.fillRect(0, HUD_H - 2, nw, 1);
+}
+
+function render() {
+  const [nw, nh] = nativeSize();
+  g2.fillStyle = PAL[0];
+  g2.fillRect(0, 0, nw, nh);
+  renderHud();
+  for (let i = 0; i < game.w * game.h; i++) drawCell(i);
+
+  // 光标
+  if (!game.over && !game.won && game.cursorOn) {
+    const x = PAD + game.cx * T, y = HUD_H + 2 + game.cy * T;
+    g2.fillStyle = PAL[3];
+    g2.fillRect(x, y, T, 2); g2.fillRect(x, y + T - 2, T, 2);
+    g2.fillRect(x, y, 2, T); g2.fillRect(x + T - 2, y, 2, T);
+  }
+
+  if (game.over || game.won) {
+    const bw = Math.min(nw - 6, 124), bh = 46;
+    const bx = Math.floor((nw - bw) / 2), by = Math.floor((nh - bh) / 2);
+    g2.fillStyle = PAL[0]; g2.fillRect(bx, by, bw, bh);
+    g2.fillStyle = PAL[3];
+    g2.fillRect(bx, by, bw, 1); g2.fillRect(bx, by + bh - 1, bw, 1);
+    g2.fillRect(bx, by, 1, bh); g2.fillRect(bx + bw - 1, by, 1, bh);
+    g2.fillStyle = PAL[2]; g2.fillRect(bx + 2, by + 2, bw - 4, 1); g2.fillRect(bx + 2, by + bh - 3, bw - 4, 1);
+    let t = game.won ? "CLEAR!" : "BOOM!";
+    drawText(g2, t, Math.floor((nw - textW(t, 2)) / 2), by + 6, 3, 2);
+    t = game.won ? "T " + game.seconds + "S" + (game.newBest ? " *BEST*" : "") : "T " + game.seconds + "S";
+    drawText(g2, t, Math.floor((nw - textW(t, 1)) / 2), by + 23, 3);
+    if (game.blink) {
+      t = "> PRESS ANY KEY";
+      drawText(g2, t, Math.floor((nw - textW(t, 1)) / 2), by + 34, 2);
+    }
+  }
+}
+
+/* ---------- 操作 ---------- */
+function doReveal(i) {
+  if (game.over || game.won || game.flagged.has(i)) return;
+  if (game.revealed.has(i)) { doChord(i); return; }
+  if (!game.started) {
+    game.mines = MINES.gen(game.w, game.h, game.m, i, Math.random);
+    game.cnt = MINES.counts(game.w, game.h, game.mines);
+    game.started = true;
+  }
+  const res = MINES.reveal(game.w, game.h, game.mines, game.cnt, game.revealed, game.flagged, i);
+  if (res === null) { lose(i); return; }
+  if (res.length > 3) SND.flood(); else if (res.length) SND.open();
+  checkWin();
+  render();
+}
+
+function doChord(i) {
+  if (!game.revealed.has(i) || game.cnt[i] <= 0) { SND.bump(); return; }
+  const nbs = MINES.adj(game.w, game.h, i);
+  const flags = nbs.filter(n => game.flagged.has(n)).length;
+  if (flags !== game.cnt[i]) { SND.bump(); return; }
+  let opened = 0;
+  for (const n of nbs) {
+    if (game.flagged.has(n) || game.revealed.has(n)) continue;
+    const res = MINES.reveal(game.w, game.h, game.mines, game.cnt, game.revealed, game.flagged, n);
+    if (res === null) { lose(n); return; }
+    opened += res.length;
+  }
+  if (opened) SND.flood(); else SND.bump();
+  checkWin();
+  render();
+}
+
+function doFlag(i) {
+  if (game.over || game.won || game.revealed.has(i)) return;
+  if (game.flagged.has(i)) { game.flagged.delete(i); SND.unflag(); }
+  else { game.flagged.add(i); SND.flag(); }
+  render();
+}
+
+function lose(i) {
+  game.over = true;
+  game.boomAt = i;
+  game.revealed.add(i);
+  SND.boom();
+  render(); updateStatus();
+}
+
+function checkWin() {
+  if (game.revealed.size === game.w * game.h - game.m && game.started) {
+    game.won = true;
+    for (const m of game.mines) game.flagged.add(m);
+    const prev = store.best[game.diff];
+    if (!prev || game.seconds < prev) { store.best[game.diff] = game.seconds; game.newBest = !!prev; saveStore(); }
+    SND.win();
+    updateStatus();
+  }
+}
+
+/* ---------- 输入 ---------- */
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+  else {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) req.call(el);
+  }
+}
+["fullscreenchange", "webkitfullscreenchange"].forEach(ev =>
+  document.addEventListener(ev, () => { layout(); render(); }));
+function toggleMute() {
+  game.muted = !game.muted;
+  try { localStorage.setItem("hh_muted", game.muted ? "1" : "0"); } catch (e) {}
+  updateStatus();
+  if (!game.muted) SND.open();
+}
+
+const CUR = {
+  ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+  w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0], W: [0, -1], S: [0, 1], A: [-1, 0], D: [1, 0],
+};
+
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  SND.unlock();
+  if (game.over || game.won) {
+    e.preventDefault();
+    if (e.key === "f" || e.key === "F") { toggleFullscreen(); return; }
+    if (e.key === "m" || e.key === "M") { toggleMute(); return; }
+    if (e.key === "Escape") { if (!isFullscreen()) location.href = "./"; return; }
+    if (e.key === "1") { newGame(1); return; }
+    if (e.key === "2") { newGame(2); return; }
+    if (e.key === "3") { newGame(3); return; }
+    newGame(game.diff);
+    return;
+  }
+  const d = CUR[e.key];
+  if (d) {
+    e.preventDefault();
+    game.cx = Math.min(game.w - 1, Math.max(0, game.cx + d[0]));
+    game.cy = Math.min(game.h - 1, Math.max(0, game.cy + d[1]));
+    game.cursorOn = true;
+    SND.cursor();
+    render();
+    return;
+  }
+  switch (e.key) {
+    case " ": case "z": case "Z": case "Enter": e.preventDefault(); doReveal(game.cy * game.w + game.cx); break;
+    case "x": case "X": e.preventDefault(); doFlag(game.cy * game.w + game.cx); break;
+    case "1": e.preventDefault(); newGame(1); break;
+    case "2": e.preventDefault(); newGame(2); break;
+    case "3": e.preventDefault(); newGame(3); break;
+    case "r": case "R": e.preventDefault(); newGame(game.diff); break;
+    case "f": case "F": e.preventDefault(); toggleFullscreen(); break;
+    case "m": case "M": e.preventDefault(); toggleMute(); break;
+    case "Escape": e.preventDefault(); if (!isFullscreen()) location.href = "./"; break;
+  }
+});
+
+function cellFromEvent(e) {
+  const rect = cv.getBoundingClientRect();
+  const [nw] = nativeSize();
+  const scale = rect.width / nw;
+  const x = Math.floor(((e.clientX - rect.left) / scale - PAD) / T);
+  const y = Math.floor(((e.clientY - rect.top) / scale - HUD_H - 2) / T);
+  if (x < 0 || y < 0 || x >= game.w || y >= game.h) return -1;
+  return y * game.w + x;
+}
+screenBox.addEventListener("pointerdown", e => {
+  SND.unlock();
+  if (game.over || game.won) { newGame(game.diff); return; }
+  const i = cellFromEvent(e);
+  if (i < 0) return;
+  game.cx = i % game.w; game.cy = (i / game.w) | 0;
+  if (e.button === 2) doFlag(i);
+  else doReveal(i);
+});
+screenBox.addEventListener("contextmenu", e => e.preventDefault());
+
+window.addEventListener("resize", () => { layout(); render(); });
+newGame(game.diff);
+</script>
+</body>
+</html>
