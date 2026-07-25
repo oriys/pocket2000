@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>五子棋 · POCKET 2000</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(140% 120% at 50% 38%, #a4c31d 0%, #9bbc0f 55%, #83a40d 100%);
+    color: #0f380f;
+    font-family: "PingFang SC", "Microsoft YaHei", ui-monospace, Menlo, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+  }
+  .screen {
+    position: fixed; inset: 0 0 32px 0;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .hintbar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 32px;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 12px; color: rgba(15,56,15,.72); letter-spacing: .03em;
+    padding: 0 12px; white-space: nowrap; overflow: hidden;
+  }
+  .hintbar b { color: #0f380f; font-weight: 600; }
+  .hintbar .sep { opacity: .45; }
+  @media (max-width: 720px) { .hintbar .keysHint, .hintbar .sep { display: none; } }
+</style>
+</head>
+<body>
+<div class="screen" id="screen"><canvas id="lcd"></canvas></div>
+<div class="hintbar">
+  <span id="status">加载中…</span>
+  <span class="sep">｜</span>
+  <span class="keysHint">方向键光标 · 空格 / 回车 落子 · 鼠标可点 · Z 悔棋 · R 重开 · T 交换先手 · F 全屏 · M 音效 · Esc 菜单</span>
+</div>
+
+<script id="core">
+"use strict";
+/* 五子棋引擎（纯逻辑）：15×15，b[i] 0空 1黑 2白 */
+const GMK = (() => {
+  const N = 15;
+  const DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
+  const at = (b, x, y) => (x < 0 || y < 0 || x >= N || y >= N) ? -1 : b[y * N + x];
+
+  function winAt(b, i) {
+    const color = b[i];
+    if (!color) return false;
+    const x = i % N, y = (i / N) | 0;
+    for (const [dx, dy] of DIRS) {
+      let c = 1;
+      for (let k = 1; at(b, x + dx * k, y + dy * k) === color; k++) c++;
+      for (let k = 1; at(b, x - dx * k, y - dy * k) === color; k++) c++;
+      if (c >= 5) return true;
+    }
+    return false;
+  }
+
+  function scoreLine(count, open) {
+    if (count >= 5) return 10000000;
+    if (count === 4) return open === 2 ? 1000000 : open === 1 ? 100000 : 0;
+    if (count === 3) return open === 2 ? 50000 : open === 1 ? 4000 : 0;
+    if (count === 2) return open === 2 ? 1500 : open === 1 ? 200 : 0;
+    if (count === 1) return open === 2 ? 150 : open === 1 ? 15 : 0;
+    return 0;
+  }
+
+  // 假设 color 落在 (x,y) 后，该点四个方向的连线价值
+  function evalPoint(b, x, y, color) {
+    let total = 0;
+    for (const [dx, dy] of DIRS) {
+      let c = 1, open = 0, k = 1;
+      while (at(b, x + dx * k, y + dy * k) === color) { c++; k++; }
+      if (at(b, x + dx * k, y + dy * k) === 0) open++;
+      k = 1;
+      while (at(b, x - dx * k, y - dy * k) === color) { c++; k++; }
+      if (at(b, x - dx * k, y - dy * k) === 0) open++;
+      total += scoreLine(c, open);
+    }
+    return total;
+  }
+
+  function candidates(b) {
+    const set = new Set();
+    let any = false;
+    for (let i = 0; i < N * N; i++) {
+      if (!b[i]) continue;
+      any = true;
+      const x = i % N, y = (i / N) | 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        const k = ny * N + nx;
+        if (!b[k]) set.add(k);
+      }
+    }
+    if (!any) return [7 * N + 7];
+    return [...set];
+  }
+
+  // 电脑走子：1) 能成五立即走 2) 挡住对方成五点 3) 攻防评分取最高
+  function bestMove(b, ai, rand) {
+    const opp = 3 - ai;
+    const cands = candidates(b);
+    for (const i of cands) {
+      b[i] = ai;
+      const w = winAt(b, i);
+      b[i] = 0;
+      if (w) return i;
+    }
+    let blockAt = -1, blockScore = -1;
+    for (const i of cands) {
+      b[i] = opp;
+      const w = winAt(b, i);
+      b[i] = 0;
+      if (w) {
+        const s = evalPoint(b, i % N, (i / N) | 0, opp);
+        if (s > blockScore) { blockScore = s; blockAt = i; }
+      }
+    }
+    if (blockAt >= 0) return blockAt;
+    let best = -1, bestS = -Infinity;
+    for (const i of cands) {
+      const x = i % N, y = (i / N) | 0;
+      const s = evalPoint(b, x, y, ai) + evalPoint(b, x, y, opp) * 0.85 +
+        (14 - Math.abs(x - 7) - Math.abs(y - 7)) * 2 +
+        (rand ? rand() * 8 : 0);
+      if (s > bestS) { bestS = s; best = i; }
+    }
+    return best;
+  }
+
+  return { N, winAt, evalPoint, candidates, bestMove };
+})();
+if (typeof module !== "undefined") module.exports = { GMK };
+</script>
+
+<script>
+"use strict";
+const PAL = ["#9bbc0f", "#8bac0f", "#306230", "#0f380f"];
+const FONT = {
+  "0":"111101101101111","1":"010110010010111","2":"111001111100111","3":"111001011001111",
+  "4":"101101111001001","5":"111100111001111","6":"111100111101111","7":"111001010010010",
+  "8":"111101111101111","9":"111101111001111",
+  "A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110",
+  "E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101",
+  "I":"111010010010111","K":"101110100110101","L":"100100100100111","M":"101111111101101",
+  "N":"110101101101101","O":"010101101101010","P":"110101110100100","R":"110101110110101",
+  "S":"011100010001110","T":"111010010010010","U":"101101101101111","V":"101101101101010",
+  "W":"101101111111101","X":"101101010101101","Y":"101101010010010","Z":"111001010100111",
+  "J":"001001001101010","Q":"010101101011001",
+  " ":"000000000000000",":":"000010000010000","!":"010010010000010",">":"100010001010100",
+  "*":"000101010101000","-":"000000111000000",".":"000000000000010",
+};
+function drawText(g, str, x, y, col, scale) {
+  scale = scale || 1;
+  g.fillStyle = PAL[col];
+  for (const ch of String(str).toUpperCase()) {
+    const bits = FONT[ch] || FONT[" "];
+    for (let i = 0; i < 15; i++) {
+      if (bits[i] === "1") g.fillRect(x + (i % 3) * scale, y + ((i / 3) | 0) * scale, scale, scale);
+    }
+    x += 4 * scale;
+  }
+  return x;
+}
+const textW = (str, scale) => String(str).length * 4 * (scale || 1) - (scale || 1);
+
+const SND = (() => {
+  let ctx = null;
+  function ensure() {
+    if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function tone(freq, dur, delay, type, vol) {
+    const c = ensure(); if (!c || game.muted) return;
+    const t0 = c.currentTime + (delay || 0);
+    const o = c.createOscillator(), gn = c.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    gn.gain.setValueAtTime(vol || 0.04, t0);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  return {
+    unlock: ensure,
+    cursor(){ tone(880, 0.02, 0, "square", 0.02); },
+    me()    { tone(620, 0.05); },
+    cpu()   { tone(420, 0.05); },
+    undo()  { tone(520, 0.04); tone(390, 0.04, 0.05); },
+    bump()  { tone(100, 0.05, 0, "sawtooth", 0.04); },
+    win()   { [523, 659, 784, 988, 1319].forEach((f, i) => tone(f, 0.14, i * 0.1, "square", 0.05)); },
+    lose()  { [330, 262, 220, 165].forEach((f, i) => tone(f, 0.18, i * 0.12, "square", 0.05)); },
+  };
+})();
+
+const STORE_KEY = "gomoku_v1";
+function loadStore() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } }
+function saveStore() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {} }
+const store = loadStore();
+store.w = store.w || 0; store.l = store.l || 0; store.d = store.d || 0;
+if (store.first !== "ai") store.first = "me";
+
+const N = GMK.N, T = 16, HUD_H = 14, PAD = 4;
+
+const cv = document.getElementById("lcd");
+const g2 = cv.getContext("2d");
+const screenBox = document.getElementById("screen");
+const statusEl = document.getElementById("status");
+
+const game = {
+  board: new Array(N * N).fill(0),
+  meColor: 1, aiColor: 2,        // 先手执黑(1)
+  turn: "me",
+  history: [],                    // {i, who}
+  lastAi: -1, lastMe: -1,
+  thinking: false,
+  over: false, result: "",        // win | lose | draw
+  cx: 7, cy: 7,
+  blink: true, cursorOn: true,
+  muted: (function () { try { return localStorage.getItem("hh_muted") === "1"; } catch (e) { return false; } })(),
+};
+setInterval(() => { game.cursorOn = !game.cursorOn; game.blink = !game.blink; render(); }, 420);
+
+/* ---------- 棋子贴图 ---------- */
+function makeStone(dark) {
+  const c = document.createElement("canvas");
+  c.width = T; c.height = T;
+  const g = c.getContext("2d");
+  for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+    const d2 = (x - 7.5) ** 2 + (y - 7.5) ** 2;
+    if (d2 > 45) continue;
+    let col;
+    if (dark) col = d2 > 32 ? 3 : (x <= 6 && y <= 6 && d2 < 14 ? 2 : 3);
+    else col = d2 > 32 ? 3 : (x >= 9 && y >= 9 ? 1 : 0);
+    g.fillStyle = PAL[col];
+    g.fillRect(x, y, 1, 1);
+  }
+  if (dark) { g.fillStyle = PAL[1]; g.fillRect(5, 5, 2, 2); }
+  return c;
+}
+const STONE_DARK = makeStone(true), STONE_LIGHT = makeStone(false);
+
+function nativeSize() {
+  return [N * T + PAD * 2, N * T + PAD * 2 + HUD_H];
+}
+function layout() {
+  const [nw, nh] = nativeSize();
+  cv.width = nw; cv.height = nh;
+  const availW = screenBox.clientWidth - 8, availH = screenBox.clientHeight - 8;
+  let scale = Math.min(availW / nw, availH / nh);
+  if (scale >= 1) scale = Math.floor(scale);
+  cv.style.width = nw * scale + "px";
+  cv.style.height = nh * scale + "px";
+}
+
+function render() {
+  const [nw, nh] = nativeSize();
+  g2.fillStyle = PAL[0];
+  g2.fillRect(0, 0, nw, nh);
+  drawText(g2, "GOMOKU", 3, 4, 3);
+  const right = "W" + String(store.w).padStart(2, "0") + " L" + String(store.l).padStart(2, "0");
+  drawText(g2, right, nw - textW(right, 1) - 3, 4, 3);
+  g2.fillStyle = PAL[2];
+  g2.fillRect(0, HUD_H - 2, nw, 1);
+
+  const ox = PAD, oy = HUD_H + 2;
+  // 棋盘网格
+  g2.fillStyle = PAL[2];
+  for (let i = 0; i < N; i++) {
+    g2.fillRect(ox + i * T + 7, oy + 7, 1, (N - 1) * T + 2);
+    g2.fillRect(ox + 7, oy + i * T + 7, (N - 1) * T + 2, 1);
+  }
+  // 星位
+  [[3, 3], [11, 3], [7, 7], [3, 11], [11, 11]].forEach(([x, y]) => {
+    g2.fillStyle = PAL[2];
+    g2.fillRect(ox + x * T + 6, oy + y * T + 6, 3, 3);
+  });
+  // 棋子
+  for (let i = 0; i < N * N; i++) {
+    if (!game.board[i]) continue;
+    const x = ox + (i % N) * T, y = oy + ((i / N) | 0) * T;
+    g2.drawImage(game.board[i] === 1 ? STONE_DARK : STONE_LIGHT, x, y);
+  }
+  // 最后一手标记
+  if (game.lastAi >= 0) {
+    const x = ox + (game.lastAi % N) * T, y = oy + ((game.lastAi / N) | 0) * T;
+    g2.fillStyle = game.board[game.lastAi] === 1 ? PAL[0] : PAL[3];
+    g2.fillRect(x + 7, y + 7, 2, 2);
+  }
+  // 光标
+  if (!game.over && game.turn === "me" && game.cursorOn) {
+    const x = ox + game.cx * T, y = oy + game.cy * T;
+    g2.fillStyle = PAL[3];
+    g2.fillRect(x, y, 5, 2); g2.fillRect(x, y, 2, 5);
+    g2.fillRect(x + T - 5, y, 5, 2); g2.fillRect(x + T - 2, y, 2, 5);
+    g2.fillRect(x, y + T - 2, 5, 2); g2.fillRect(x, y + T - 5, 2, 5);
+    g2.fillRect(x + T - 5, y + T - 2, 5, 2); g2.fillRect(x + T - 2, y + T - 5, 2, 5);
+  }
+
+  if (game.over) {
+    const bw = Math.min(nw - 6, 128), bh = 46;
+    const bx = Math.floor((nw - bw) / 2), by = Math.floor((nh - bh) / 2);
+    g2.fillStyle = PAL[0]; g2.fillRect(bx, by, bw, bh);
+    g2.fillStyle = PAL[3];
+    g2.fillRect(bx, by, bw, 1); g2.fillRect(bx, by + bh - 1, bw, 1);
+    g2.fillRect(bx, by, 1, bh); g2.fillRect(bx + bw - 1, by, 1, bh);
+    g2.fillStyle = PAL[2]; g2.fillRect(bx + 2, by + 2, bw - 4, 1); g2.fillRect(bx + 2, by + bh - 3, bw - 4, 1);
+    let t = game.result === "win" ? "YOU WIN!" : game.result === "lose" ? "CPU WINS" : "DRAW";
+    drawText(g2, t, Math.floor((nw - textW(t, 2)) / 2), by + 6, 3, 2);
+    t = "W" + store.w + " L" + store.l + " D" + store.d;
+    drawText(g2, t, Math.floor((nw - textW(t, 1)) / 2), by + 23, 2);
+    if (game.blink) {
+      t = "> PRESS ANY KEY";
+      drawText(g2, t, Math.floor((nw - textW(t, 1)) / 2), by + 34, 2);
+    }
+  }
+}
+
+function updateStatus() {
+  const who = store.first === "me" ? "你执黑先行" : "电脑执黑先行";
+  const turnTxt = game.over ? (game.result === "win" ? "你赢了！" : game.result === "lose" ? "电脑赢了" : "平局")
+    : game.thinking ? "电脑思考中…" : "轮到你";
+  statusEl.innerHTML = "<b>五子棋</b> · " + who + " · " + turnTxt +
+    " · 战绩 <b>" + store.w + "</b> 胜 <b>" + store.l + "</b> 负 " + store.d + " 和" +
+    (game.muted ? " · 已静音" : "");
+}
+
+/* ---------- 流程 ---------- */
+function newGame() {
+  game.board = new Array(N * N).fill(0);
+  game.meColor = store.first === "me" ? 1 : 2;
+  game.aiColor = 3 - game.meColor;
+  game.history = [];
+  game.lastAi = -1;
+  game.thinking = false;
+  game.over = false; game.result = "";
+  game.cx = 7; game.cy = 7;
+  if (store.first === "ai") {
+    game.turn = "ai";
+    aiTurn(120);
+  } else {
+    game.turn = "me";
+  }
+  layout(); render(); updateStatus();
+}
+
+function endGame(result) {
+  game.over = true;
+  game.result = result;
+  if (result === "win") { store.w++; SND.win(); }
+  else if (result === "lose") { store.l++; SND.lose(); }
+  else { store.d++; SND.cpu(); }
+  saveStore();
+  render(); updateStatus();
+}
+
+function boardFull() { return game.history.length >= N * N; }
+
+function placeMe(i) {
+  if (game.over || game.turn !== "me" || game.board[i]) { SND.bump(); return; }
+  game.board[i] = game.meColor;
+  game.history.push({ i, who: "me" });
+  SND.me();
+  if (GMK.winAt(game.board, i)) { endGame("win"); return; }
+  if (boardFull()) { endGame("draw"); return; }
+  game.turn = "ai";
+  render(); updateStatus();
+  aiTurn(360);
+}
+
+function aiTurn(delay) {
+  game.thinking = true;
+  updateStatus();
+  setTimeout(() => {
+    if (game.over) return;
+    const i = GMK.bestMove(game.board, game.aiColor, Math.random);
+    game.board[i] = game.aiColor;
+    game.history.push({ i, who: "ai" });
+    game.lastAi = i;
+    game.thinking = false;
+    SND.cpu();
+    if (GMK.winAt(game.board, i)) { endGame("lose"); return; }
+    if (boardFull()) { endGame("draw"); return; }
+    game.turn = "me";
+    render(); updateStatus();
+  }, delay);
+}
+
+function doUndo() {
+  if (game.over || game.turn !== "me" || game.history.length < 2) { SND.bump(); return; }
+  for (let k = 0; k < 2; k++) {
+    const u = game.history.pop();
+    game.board[u.i] = 0;
+  }
+  const lastAiMove = [...game.history].reverse().find(h => h.who === "ai");
+  game.lastAi = lastAiMove ? lastAiMove.i : -1;
+  SND.undo();
+  render(); updateStatus();
+}
+
+/* ---------- 输入 ---------- */
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+  else {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) req.call(el);
+  }
+}
+["fullscreenchange", "webkitfullscreenchange"].forEach(ev =>
+  document.addEventListener(ev, () => { layout(); render(); }));
+function toggleMute() {
+  game.muted = !game.muted;
+  try { localStorage.setItem("hh_muted", game.muted ? "1" : "0"); } catch (e) {}
+  updateStatus();
+  if (!game.muted) SND.me();
+}
+
+const CUR = {
+  ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+  w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0], W: [0, -1], S: [0, 1], A: [-1, 0], D: [1, 0],
+};
+
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  SND.unlock();
+  if (game.over) {
+    e.preventDefault();
+    if (e.key === "f" || e.key === "F") { toggleFullscreen(); return; }
+    if (e.key === "m" || e.key === "M") { toggleMute(); return; }
+    if (e.key === "Escape") { if (!isFullscreen()) location.href = "./"; return; }
+    if (e.key === "t" || e.key === "T") { store.first = store.first === "me" ? "ai" : "me"; saveStore(); }
+    newGame();
+    return;
+  }
+  const d = CUR[e.key];
+  if (d) {
+    e.preventDefault();
+    game.cx = Math.min(N - 1, Math.max(0, game.cx + d[0]));
+    game.cy = Math.min(N - 1, Math.max(0, game.cy + d[1]));
+    game.cursorOn = true;
+    SND.cursor();
+    render();
+    return;
+  }
+  switch (e.key) {
+    case " ": case "Enter": e.preventDefault(); placeMe(game.cy * N + game.cx); break;
+    case "z": case "Z": case "u": case "U": case "Backspace": e.preventDefault(); doUndo(); break;
+    case "r": case "R": e.preventDefault(); SND.me(); newGame(); break;
+    case "t": case "T": e.preventDefault(); store.first = store.first === "me" ? "ai" : "me"; saveStore(); SND.me(); newGame(); break;
+    case "f": case "F": e.preventDefault(); toggleFullscreen(); break;
+    case "m": case "M": e.preventDefault(); toggleMute(); break;
+    case "Escape": e.preventDefault(); if (!isFullscreen()) location.href = "./"; break;
+  }
+});
+
+screenBox.addEventListener("pointerdown", e => {
+  SND.unlock();
+  if (game.over) { newGame(); return; }
+  const rect = cv.getBoundingClientRect();
+  const [nw] = nativeSize();
+  const scale = rect.width / nw;
+  const x = Math.floor(((e.clientX - rect.left) / scale - PAD) / T);
+  const y = Math.floor(((e.clientY - rect.top) / scale - HUD_H - 2) / T);
+  if (x < 0 || y < 0 || x >= N || y >= N) return;
+  game.cx = x; game.cy = y;
+  placeMe(y * N + x);
+});
+
+window.addEventListener("resize", () => { layout(); render(); });
+newGame();
+</script>
+</body>
+</html>

@@ -18,7 +18,7 @@
 | **关灯游戏** LIGHTS OUT | 解谜 | 50 关确定性生成、保证可解，显示目标按数 | [lightsout.html](https://oriys.github.io/pocket2000/lightsout.html) |
 | **记忆序列** SIMON | 记忆 | 1978 年电子玩具经典：灯序越来越长，凭记忆复现 | [simon.html](https://oriys.github.io/pocket2000/simon.html) |
 | **猜数字** 1A2B | 推理 | 文曲星经典：猜 4 位不重复数字，几A几B 收敛真相 | [guess.html](https://oriys.github.io/pocket2000/guess.html) |
-| **扫雷** MINES | 推理 | 初/中/高三种规格（9×9 到 30×16/99 雷），首点必安全，支持清算 | [mines.html](https://oriys.github.io/pocket2000/mines.html) |
+| **五子棋** GOMOKU | 推理 | 15×15 人机对弈，电脑会抢五、堵杀、拆活三，支持交换先手与悔棋 | [gomoku.html](https://oriys.github.io/pocket2000/gomoku.html) |
 | **数织** PICROSS | 推理 | 29 幅像素画，全部经求解器验证"仅凭行列数字唯一可解"，完成揭晓图案 | [nonogram.html](https://oriys.github.io/pocket2000/nonogram.html) |
 
 ![华容道](screenshot-klotski.png)
@@ -28,12 +28,13 @@
 | 按键 | 功能 |
 |---|---|
 | 方向键 / WASD | 移动 / 滑动 / 光标（Simon 中即四个按键） |
-| Z / 空格 | 撤销，或翻开 / 涂格（扫雷、数织） |
-| X | 插旗（扫雷）/ 打叉（数织） |
-| 数字键 | 输入（1A2B）/ 切换规格难度（数字华容道、扫雷） |
+| Z / 空格 | 撤销 · 涂格（数织）· 落子（五子棋） |
+| X | 打叉标记（数织） |
+| 数字键 | 输入（1A2B）/ 切换规格（数字华容道） |
 | R | 重开本关 |
 | N / P | 下一关 / 上一关 |
 | L | 选关面板 |
+| T | 交换先手（五子棋） |
 | F | 浏览器全屏 |
 | M | 静音（全部游戏共享） |
 | Esc | 返回掌机菜单 |

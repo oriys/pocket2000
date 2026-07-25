@@ -161,14 +161,10 @@ function guessProgress() {
   const s = readJSON("guess_v1");
   return s.best ? "最少 " + s.best + " 次猜中 · 赢 " + (s.wins || 0) + " 局" : "文曲星经典 · 4 位数推理";
 }
-function minesProgress() {
-  const s = readJSON("mines_v1");
-  const b = s.best || {};
-  const parts = [];
-  if (b[1]) parts.push("初级 " + b[1] + "s");
-  if (b[2]) parts.push("中级 " + b[2] + "s");
-  if (b[3]) parts.push("高级 " + b[3] + "s");
-  return parts.length ? parts.join(" · ") : "9×9 / 16×16 / 30×16";
+function gomokuProgress() {
+  const s = readJSON("gomoku_v1");
+  const w = s.w || 0, l = s.l || 0;
+  return (w + l) ? "战绩 " + w + " 胜 " + l + " 负" : "和电脑对弈 · 你执黑先行";
 }
 function nonoProgress() {
   const s = readJSON("nonogram_v1");
@@ -230,11 +226,15 @@ const icons = {
     drawText(g, "1A", 7, 6, 3, 2);
     drawText(g, "2B", 13, 22, 2, 2);
   }),
-  mines: makeIcon(g => { // 地雷
+  gomoku: makeIcon(g => { // 五连珠
+    g.fillStyle = PAL[2];
+    for (let i = 0; i <= 4; i++) { g.fillRect(5, 6 + i * 7, 30, 1); g.fillRect(6 + i * 7, 5, 1, 30); }
     g.fillStyle = PAL[3];
-    g.fillRect(14, 14, 12, 12); g.fillRect(18, 10, 4, 20); g.fillRect(10, 18, 20, 4);
-    g.fillRect(11, 11, 3, 3); g.fillRect(26, 11, 3, 3); g.fillRect(11, 26, 3, 3); g.fillRect(26, 26, 3, 3);
-    g.fillStyle = PAL[0]; g.fillRect(17, 17, 3, 3);
+    [[0, 4], [1, 3], [2, 2], [3, 1], [4, 0]].forEach(([x, y]) => g.fillRect(3 + x * 7, 3 + y * 7, 7, 7));
+    [[1, 1], [3, 3]].forEach(([x, y]) => {
+      g.fillStyle = PAL[3]; g.fillRect(3 + x * 7, 3 + y * 7, 7, 7);
+      g.fillStyle = PAL[0]; g.fillRect(4 + x * 7, 4 + y * 7, 5, 5);
+    });
   }),
   nono: makeIcon(g => { // 数织半成品
     g.fillStyle = PAL[3];
@@ -253,7 +253,7 @@ const GAMES = [
   { href: "lightsout.html", icon: icons.lightsout, name: "关灯游戏", en: "LIGHTS OUT", sub: lightsProgress },
   { href: "simon.html", icon: icons.simon, name: "记忆序列", en: "SIMON", sub: simonProgress },
   { href: "guess.html", icon: icons.guess, name: "猜数字", en: "1A2B", sub: guessProgress },
-  { href: "mines.html", icon: icons.mines, name: "扫雷", en: "MINES", sub: minesProgress },
+  { href: "gomoku.html", icon: icons.gomoku, name: "五子棋", en: "GOMOKU", sub: gomokuProgress },
   { href: "nonogram.html", icon: icons.nono, name: "数织", en: "PICROSS", sub: nonoProgress },
 ];
 let sel = 0;
