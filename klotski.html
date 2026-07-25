@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>华容道 · SOKO-BAN 2000</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(140% 120% at 50% 38%, #a4c31d 0%, #9bbc0f 55%, #83a40d 100%);
+    color: #0f380f;
+    font-family: "PingFang SC", "Microsoft YaHei", ui-monospace, Menlo, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+  }
+
+  .hud {
+    position: fixed; top: 0; left: 0; right: 0; height: 44px;
+    display: flex; align-items: center; justify-content: center; gap: 26px;
+    font-size: 14px; color: rgba(15,56,15,.8); letter-spacing: .03em;
+  }
+  .hud b { color: #0f380f; font-weight: 700; font-size: 16px; }
+
+  .stage {
+    position: fixed; inset: 44px 0 32px 0;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  .board {
+    position: relative;
+    background: #8bac0f;
+    border: 5px solid #0f380f;
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 2px rgba(155,188,15,.45), 0 6px 0 rgba(15,56,15,.25);
+  }
+  .exit-gap {
+    position: absolute; bottom: -5px; height: 5px;
+    background: #8bac0f;
+  }
+  .exit-label {
+    position: absolute; bottom: -26px; width: 100%;
+    text-align: center; font-size: 13px; font-weight: 700;
+    color: rgba(15,56,15,.75); letter-spacing: .5em; text-indent: .5em;
+  }
+
+  .piece {
+    position: absolute;
+    display: flex; align-items: center; justify-content: center;
+    border: 3px solid #0f380f; border-radius: 7px;
+    font-weight: 700; cursor: grab; touch-action: none;
+    transition: left .1s linear, top .1s linear;
+    box-shadow: inset 2px 2px 0 rgba(155,188,15,.3), inset -2px -3px 0 rgba(15,56,15,.28);
+  }
+  .piece.cao { background: #0f380f; color: #9bbc0f; letter-spacing: .18em; text-indent: .18em; box-shadow: inset 2px 2px 0 rgba(155,188,15,.22), inset -2px -3px 0 rgba(0,0,0,.4); }
+  .piece.gen { background: #306230; color: #9bbc0f; }
+  .piece.gen.vert { writing-mode: vertical-rl; letter-spacing: .1em; }
+  .piece.pawn { background: #8bac0f; color: #0f380f; }
+  .piece.sel { outline: 3px double currentColor; outline-offset: 2px; }
+  .piece.escape { transition: top .55s ease-in, opacity .55s; opacity: .15; cursor: default; }
+
+  .hintbar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 32px;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 12px; color: rgba(15,56,15,.72); letter-spacing: .03em;
+    padding: 0 12px; white-space: nowrap; overflow: hidden;
+  }
+
+  .banner {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    background: #9bbc0f; border: 4px solid #0f380f; border-radius: 6px;
+    box-shadow: inset 0 0 0 3px #9bbc0f, inset 0 0 0 5px #306230, 0 10px 0 rgba(15,56,15,.25);
+    padding: 26px 40px; text-align: center; z-index: 5;
+  }
+  .banner[hidden] { display: none; }
+  .banner h2 { font-size: 24px; letter-spacing: .1em; margin-bottom: 12px; }
+  .banner p { font-size: 14px; margin: 4px 0; color: rgba(15,56,15,.85); }
+  .banner .go { margin-top: 12px; font-size: 13px; font-weight: 700; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---------- 选局面板 ---------- */
+  .modal {
+    position: fixed; inset: 0; z-index: 10;
+    background: rgba(8, 9, 13, .78); backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal[hidden] { display: none; }
+  .panel {
+    width: min(780px, 100%); max-height: 86vh; display: flex; flex-direction: column;
+    background: #1d1f27; border: 1px solid #343741; border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6); overflow: hidden;
+    color: #aeb4c4;
+  }
+  .panel header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; }
+  .panel header h2 { font-size: 15px; color: #d8dce8; font-weight: 600; }
+  .panel header button { border: 0; background: none; color: #7c8396; font-size: 20px; cursor: pointer; padding: 2px 8px; }
+  .grid {
+    overflow-y: auto; padding: 4px 16px 16px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 8px;
+  }
+  .grid button {
+    border: 1px solid #343741; border-radius: 9px;
+    background: #23252d; color: #aeb4c4; font-size: 12px; padding: 8px 5px 6px;
+    cursor: pointer; font-family: inherit; line-height: 1.3;
+  }
+  .grid button canvas { display: block; margin: 0 auto 5px; background: #9bbc0f; border-radius: 4px; image-rendering: pixelated; }
+  .grid button small { display: block; font-size: 10px; color: #6d7487; }
+  .grid button.done { background: #24371a; border-color: #4a6d2a; color: #b9e07e; }
+  .grid button.done small { color: #86a45c; }
+  .grid button.cur { outline: 2px solid #a9d64c; outline-offset: 1px; }
+  .panel footer { padding: 10px 16px 14px; font-size: 11px; color: #5b6172; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .panel footer .danger { border: 0; background: none; color: #8a5560; cursor: pointer; font-size: 11px; text-decoration: underline; font-family: inherit; }
+  .panel footer .credit { width: 100%; font-size: 10px; color: #464c5c; }
+
+  @media (max-width: 700px) {
+    .hintbar { font-size: 10px; }
+    .hud { gap: 12px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="hud">
+  <span id="hudName"><b>—</b></span>
+  <span>步数 <b id="hudSteps">0</b></span>
+  <span>公认最优 <b id="hudPar">—</b></span>
+  <span>我的最佳 <b id="hudBest">—</b></span>
+</div>
+<div class="stage" id="stage">
+  <div class="board" id="board">
+    <div class="exit-gap" id="exitGap"></div>
+    <div class="exit-label">出口</div>
+  </div>
+</div>
+<div class="banner" id="banner" hidden>
+  <h2>曹操逃出华容道！</h2>
+  <p id="bannerStats"></p>
+  <p id="bannerBest"></p>
+  <div class="go">▶ 按任意键 下一局</div>
+</div>
+<div class="hintbar">
+  <span>←↑↓→ 移动选中块 · 点击 / Tab 选块 · 也可拖动</span>
+  <span style="opacity:.45">｜</span>
+  <span>Z 悔棋 · R 重开 · N / P 换局 · L 选局 · F 全屏 · M 音效 · Esc 菜单</span>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="panel">
+    <header>
+      <h2>选择布局（共 39 局经典开局）</h2>
+      <button id="modalClose" aria-label="关闭">✕</button>
+    </header>
+    <div class="grid" id="grid"></div>
+    <footer>
+      <span id="progressNote"></span>
+      <button class="danger" id="resetProgress">清空全部进度</button>
+      <span class="credit">布局数据：jeantimex/klotski（MIT License）· 步数按传统计法（同一块连续滑动算一步）</span>
+    </footer>
+  </div>
+</div>
+
+<script id="core">
+"use strict";
+/* 39 个经典开局：{name, moves(公认最优), pieces:[{r,c,h,w}]}，均经 BFS 验证可解 */
+const LAYOUTS = [{"name":"横刀立马","moves":81,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":3,"c":1,"h":1,"w":1},{"r":3,"c":2,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"指挥若定","moves":70,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":3,"c":0,"h":2,"w":1},{"r":3,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":2,"c":0,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1},{"r":3,"c":1,"h":1,"w":1},{"r":3,"c":2,"h":1,"w":1}]},{"name":"将拥曹营","moves":72,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":1,"c":0,"h":2,"w":1},{"r":1,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":2,"w":1},{"r":2,"c":2,"h":2,"w":1},{"r":4,"c":0,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1},{"r":4,"c":2,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"齐头并进","moves":60,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":3,"c":0,"h":2,"w":1},{"r":3,"c":3,"h":2,"w":1},{"r":3,"c":1,"h":1,"w":2},{"r":2,"c":0,"h":1,"w":1},{"r":2,"c":1,"h":1,"w":1},{"r":2,"c":2,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1}]},{"name":"并分三路","moves":73,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":1,"c":0,"h":2,"w":1},{"r":1,"c":3,"h":2,"w":1},{"r":3,"c":0,"h":2,"w":1},{"r":3,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":3,"c":1,"h":1,"w":1},{"r":3,"c":2,"h":1,"w":1}]},{"name":"雨声淅沥","moves":47,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":3,"h":2,"w":1},{"r":3,"c":1,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"左右布兵","moves":54,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":1,"h":2,"w":1},{"r":2,"c":2,"h":2,"w":1},{"r":2,"c":3,"h":2,"w":1},{"r":4,"c":1,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":0,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1}]},{"name":"桃花园中","moves":70,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":1,"c":0,"h":2,"w":1},{"r":1,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":2,"w":1},{"r":2,"c":2,"h":2,"w":1},{"r":4,"c":1,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"一路进军","moves":58,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":1,"h":2,"w":1},{"r":2,"c":2,"h":2,"w":1},{"r":4,"c":1,"h":1,"w":2},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"一路顺风","moves":39,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":3,"h":2,"w":1},{"r":3,"c":2,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1},{"r":3,"c":1,"h":1,"w":1},{"r":4,"c":1,"h":1,"w":1}]},{"name":"围而不歼","moves":62,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":2,"c":0,"h":2,"w":1},{"r":3,"c":1,"h":2,"w":1},{"r":3,"c":2,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"捷足先登","moves":32,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":3,"c":0,"h":2,"w":1},{"r":3,"c":1,"h":2,"w":1},{"r":3,"c":2,"h":2,"w":1},{"r":3,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":0,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1}]},{"name":"插翅难飞","moves":62,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":3,"c":0,"h":2,"w":1},{"r":3,"c":3,"h":2,"w":1},{"r":2,"c":0,"h":1,"w":2},{"r":3,"c":1,"h":1,"w":2},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1},{"r":2,"c":2,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1}]},{"name":"守口如瓶 I","moves":81,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":2,"w":1},{"r":4,"c":0,"h":1,"w":2},{"r":4,"c":2,"h":1,"w":2},{"r":2,"c":0,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"守口如瓶 II","moves":99,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":1,"c":0,"h":2,"w":1},{"r":1,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":2,"w":1},{"r":4,"c":0,"h":1,"w":2},{"r":4,"c":2,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"双将挡路","moves":73,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":3,"c":1,"h":1,"w":2},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"横马当关","moves":83,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":3,"c":1,"h":2,"w":1},{"r":2,"c":0,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"层层设防 I","moves":102,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":3,"c":1,"h":1,"w":2},{"r":4,"c":1,"h":1,"w":2},{"r":2,"c":0,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"层层设防 II","moves":120,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":1,"c":0,"h":2,"w":1},{"r":1,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":3,"c":1,"h":1,"w":2},{"r":4,"c":1,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"兵挡将阻","moves":87,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":3,"c":1,"h":1,"w":2},{"r":4,"c":1,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":1,"c":0,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"堵塞要道","moves":40,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":1,"h":2,"w":1},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":2,"h":1,"w":2},{"r":4,"c":1,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":0,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1}]},{"name":"瓮中之鳖","moves":103,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":0,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":1,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"层峦叠嶂","moves":98,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":2},{"r":3,"c":2,"h":1,"w":2},{"r":2,"c":0,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"水泄不通","moves":79,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":2,"c":0,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":2},{"r":3,"c":2,"h":1,"w":2},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"四路进兵","moves":77,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":2,"h":1,"w":2},{"r":4,"c":0,"h":1,"w":2},{"r":4,"c":2,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":0,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1}]},{"name":"入地无门","moves":87,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":2},{"r":3,"c":2,"h":1,"w":2},{"r":4,"c":1,"h":1,"w":2},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1},{"r":2,"c":0,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1}]},{"name":"勇闯五关","moves":34,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":2,"c":0,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":2},{"r":3,"c":2,"h":1,"w":2},{"r":4,"c":1,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":0,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1}]},{"name":"四面楚歌","moves":57,"pieces":[{"r":1,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":3,"h":2,"w":1},{"r":3,"c":0,"h":2,"w":1},{"r":3,"c":1,"h":1,"w":2},{"r":0,"c":1,"h":1,"w":1},{"r":0,"c":2,"h":1,"w":1},{"r":2,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"前呼后拥","moves":22,"pieces":[{"r":0,"c":2,"h":2,"w":2},{"r":1,"c":0,"h":1,"w":2},{"r":2,"c":0,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":2},{"r":3,"c":2,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":1,"h":1,"w":1},{"r":4,"c":2,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"兵临曹营","moves":34,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":3,"h":2,"w":1},{"r":3,"c":1,"h":2,"w":1},{"r":3,"c":2,"h":2,"w":1},{"r":2,"c":1,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":3,"h":1,"w":1},{"r":1,"c":0,"h":1,"w":1},{"r":1,"c":3,"h":1,"w":1}]},{"name":"五将逼宫","moves":36,"pieces":[{"r":1,"c":1,"h":2,"w":2},{"r":1,"c":0,"h":2,"w":1},{"r":1,"c":3,"h":2,"w":1},{"r":0,"c":0,"h":1,"w":2},{"r":0,"c":2,"h":1,"w":2},{"r":3,"c":1,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"前挡后阻","moves":42,"pieces":[{"r":0,"c":0,"h":2,"w":2},{"r":1,"c":2,"h":2,"w":1},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":1,"h":2,"w":1},{"r":0,"c":2,"h":1,"w":2},{"r":4,"c":1,"h":1,"w":2},{"r":1,"c":3,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1},{"r":3,"c":2,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"近在咫尺","moves":98,"pieces":[{"r":3,"c":2,"h":2,"w":2},{"r":0,"c":1,"h":2,"w":1},{"r":0,"c":2,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":0,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":1,"c":0,"h":1,"w":1},{"r":2,"c":2,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1}]},{"name":"小燕出巢","moves":103,"pieces":[{"r":0,"c":1,"h":2,"w":2},{"r":0,"c":0,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":0,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":1,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"比翼横空","moves":28,"pieces":[{"r":0,"c":2,"h":2,"w":2},{"r":3,"c":3,"h":2,"w":1},{"r":0,"c":0,"h":1,"w":2},{"r":1,"c":0,"h":1,"w":2},{"r":2,"c":0,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":1},{"r":3,"c":2,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":2,"h":1,"w":1}]},{"name":"夹道藏兵","moves":75,"pieces":[{"r":0,"c":0,"h":2,"w":2},{"r":0,"c":3,"h":2,"w":1},{"r":2,"c":0,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":0,"h":1,"w":2},{"r":3,"c":2,"h":1,"w":2},{"r":0,"c":2,"h":1,"w":1},{"r":1,"c":2,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"屯兵东路","moves":71,"pieces":[{"r":0,"c":0,"h":2,"w":2},{"r":0,"c":2,"h":2,"w":1},{"r":0,"c":3,"h":2,"w":1},{"r":3,"c":0,"h":2,"w":1},{"r":3,"c":1,"h":2,"w":1},{"r":2,"c":0,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":1},{"r":2,"c":3,"h":1,"w":1},{"r":3,"c":2,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1}]},{"name":"四将连关","moves":39,"pieces":[{"r":0,"c":0,"h":2,"w":2},{"r":2,"c":0,"h":2,"w":1},{"r":2,"c":1,"h":2,"w":1},{"r":0,"c":2,"h":1,"w":2},{"r":1,"c":2,"h":1,"w":2},{"r":2,"c":2,"h":1,"w":2},{"r":3,"c":2,"h":1,"w":1},{"r":3,"c":3,"h":1,"w":1},{"r":4,"c":0,"h":1,"w":1},{"r":4,"c":3,"h":1,"w":1}]},{"name":"峰回路转","moves":138,"pieces":[{"r":1,"c":0,"h":2,"w":2},{"r":0,"c":3,"h":2,"w":1},{"r":1,"c":2,"h":2,"w":1},{"r":2,"c":3,"h":2,"w":1},{"r":3,"c":1,"h":1,"w":2},{"r":4,"c":2,"h":1,"w":2},{"r":0,"c":0,"h":1,"w":1},{"r":0,"c":1,"h":1,"w":1},{"r":0,"c":2,"h":1,"w":1},{"r":4,"c":1,"h":1,"w":1}]}];
+
+/* 引擎（纯逻辑）：4 列 × 5 行，曹操(2x2)到达 r3,c1 即胜 */
+const HRD = (() => {
+  function occupancy(pieces) {
+    const occ = Array.from({ length: 5 }, () => Array(4).fill(-1));
+    pieces.forEach((p, i) => {
+      for (let y = p.r; y < p.r + p.h; y++)
+        for (let x = p.c; x < p.c + p.w; x++) occ[y][x] = i;
+    });
+    return occ;
+  }
+  function canSlide(pieces, i, dr, dc) {
+    const p = pieces[i];
+    const nr = p.r + dr, nc = p.c + dc;
+    if (nr < 0 || nc < 0 || nr + p.h > 5 || nc + p.w > 4) return false;
+    const occ = occupancy(pieces);
+    for (let y = nr; y < nr + p.h; y++)
+      for (let x = nc; x < nc + p.w; x++)
+        if (occ[y][x] !== -1 && occ[y][x] !== i) return false;
+    return true;
+  }
+  function isWin(pieces) {
+    return pieces.some(p => p.h === 2 && p.w === 2 && p.r === 3 && p.c === 1);
+  }
+  return { occupancy, canSlide, isWin };
+})();
+if (typeof module !== "undefined") module.exports = { LAYOUTS, HRD };
+</script>
+
+<script>
+"use strict";
+/* ---------- 音效 ---------- */
+const SND = (() => {
+  let ctx = null;
+  function ensure() {
+    if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function tone(freq, dur, delay, type, vol) {
+    const c = ensure(); if (!c || game.muted) return;
+    const t0 = c.currentTime + (delay || 0);
+    const o = c.createOscillator(), gn = c.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    gn.gain.setValueAtTime(vol || 0.04, t0);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  return {
+    unlock: ensure,
+    slide() { tone(340, 0.06, 0, "square", 0.05); },
+    select(){ tone(660, 0.05); },
+    bump()  { tone(100, 0.06, 0, "sawtooth", 0.05); },
+    undo()  { tone(520, 0.04); tone(390, 0.04, 0.05); },
+    win()   { [523, 659, 784, 988, 1319].forEach((f, i) => tone(f, 0.14, i * 0.1, "square", 0.05)); },
+  };
+})();
+
+/* ---------- 存档 ---------- */
+const STORE_KEY = "klotski_v1";
+function loadStore() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } }
+function saveStore() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {} }
+const store = loadStore();
+store.best = store.best || {};   // best[layoutIdx] = steps
+if (typeof store.pos !== "number") store.pos = 0;
+
+/* ---------- 游戏状态 ---------- */
+const game = {
+  idx: 0,
+  pieces: [],
+  names: [],
+  sel: 0,
+  steps: 0,
+  lastMoved: -1,
+  history: [],
+  won: false,
+  muted: (function () { try { return localStorage.getItem("hh_muted") === "1"; } catch (e) { return false; } })(),
+};
+let cell = 80;
+
+const stage = document.getElementById("stage");
+const board = document.getElementById("board");
+const banner = document.getElementById("banner");
+
+const H_NAMES = ["关羽", "张辽", "徐晃", "曹仁"];
+const V_NAMES = ["张飞", "赵云", "马超", "黄忠", "魏延", "姜维", "许褚", "庞德"];
+
+function assignNames(pieces) {
+  let hi = 0, vi = 0;
+  return pieces.map(p => {
+    if (p.h === 2 && p.w === 2) return "曹操";
+    if (p.h === 1 && p.w === 2) return H_NAMES[hi++ % H_NAMES.length];
+    if (p.h === 2 && p.w === 1) return V_NAMES[vi++ % V_NAMES.length];
+    return "兵";
+  });
+}
+
+function loadLayout(idx) {
+  game.idx = ((idx % LAYOUTS.length) + LAYOUTS.length) % LAYOUTS.length;
+  const L = LAYOUTS[game.idx];
+  game.pieces = L.pieces.map(p => ({ ...p }));
+  game.names = assignNames(game.pieces);
+  game.sel = game.pieces.findIndex(p => p.h === 2 && p.w === 2);
+  game.steps = 0;
+  game.lastMoved = -1;
+  game.history = [];
+  game.won = false;
+  banner.hidden = true;
+  store.pos = game.idx;
+  saveStore();
+  buildBoard();
+  updateHud();
+}
+
+/* ---------- DOM 渲染 ---------- */
+function layoutSize() {
+  const availW = stage.clientWidth - 36;
+  const availH = stage.clientHeight - 56;
+  cell = Math.max(40, Math.min(112, Math.floor(Math.min(availW / 4, availH / 5))));
+}
+
+function buildBoard() {
+  layoutSize();
+  board.style.width = cell * 4 + "px";
+  board.style.height = cell * 5 + "px";
+  const gap = document.getElementById("exitGap");
+  gap.style.left = cell - 2 + "px";
+  gap.style.width = cell * 2 + 4 + "px";
+  board.querySelectorAll(".piece").forEach(el => el.remove());
+  game.pieces.forEach((p, i) => {
+    const el = document.createElement("div");
+    el.className = "piece " +
+      (p.h === 2 && p.w === 2 ? "cao" : p.h === 1 && p.w === 1 ? "pawn" : "gen" + (p.h === 2 ? " vert" : ""));
+    el.dataset.i = i;
+    el.textContent = game.names[i];
+    board.appendChild(el);
+  });
+  positionAll();
+}
+
+function positionAll() {
+  board.querySelectorAll(".piece").forEach(el => {
+    const p = game.pieces[+el.dataset.i];
+    const pad = 3;
+    el.style.left = p.c * cell + pad + "px";
+    el.style.top = p.r * cell + pad + "px";
+    el.style.width = p.w * cell - pad * 2 + "px";
+    el.style.height = p.h * cell - pad * 2 + "px";
+    el.style.fontSize = (p.h === 2 && p.w === 2 ? cell * 0.4 : p.h === 1 && p.w === 1 ? cell * 0.34 : cell * 0.3) + "px";
+    el.classList.toggle("sel", +el.dataset.i === game.sel && !game.won);
+  });
+}
+
+function updateHud() {
+  const L = LAYOUTS[game.idx];
+  document.getElementById("hudName").innerHTML = "<b>" + L.name + "</b>&nbsp;·&nbsp;" + (game.idx + 1) + " / " + LAYOUTS.length;
+  document.getElementById("hudSteps").textContent = game.steps;
+  document.getElementById("hudPar").textContent = L.moves;
+  const b = store.best[game.idx];
+  document.getElementById("hudBest").textContent = b ? b + " 步" : "—";
+}
+
+/* ---------- 操作 ---------- */
+function trySlide(i, dr, dc) {
+  if (game.won || i < 0) return false;
+  if (!HRD.canSlide(game.pieces, i, dr, dc)) { SND.bump(); return false; }
+  const p = game.pieces[i];
+  game.history.push({ i, r: p.r, c: p.c, steps: game.steps, lastMoved: game.lastMoved });
+  p.r += dr; p.c += dc;
+  if (game.lastMoved !== i) game.steps++;
+  game.lastMoved = i;
+  SND.slide();
+  positionAll();
+  updateHud();
+  if (HRD.isWin(game.pieces)) handleWin();
+  return true;
+}
+
+function doUndo() {
+  if (game.won) return;
+  const u = game.history.pop();
+  if (!u) { SND.bump(); return; }
+  const p = game.pieces[u.i];
+  p.r = u.r; p.c = u.c;
+  game.steps = u.steps;
+  game.lastMoved = u.lastMoved;
+  game.sel = u.i;
+  SND.undo();
+  positionAll();
+  updateHud();
+}
+
+function selectPiece(i) {
+  if (game.won) return;
+  game.sel = i;
+  SND.select();
+  positionAll();
+}
+
+function cycleSelect(delta) {
+  selectPiece(((game.sel + delta) % game.pieces.length + game.pieces.length) % game.pieces.length);
+}
+
+function handleWin() {
+  game.won = true;
+  const caoIdx = game.pieces.findIndex(p => p.h === 2 && p.w === 2);
+  const caoEl = board.querySelector('[data-i="' + caoIdx + '"]');
+  SND.win();
+  const prev = store.best[game.idx];
+  const isBest = !prev || game.steps < prev;
+  if (isBest) { store.best[game.idx] = game.steps; saveStore(); }
+  setTimeout(() => {
+    caoEl.classList.add("escape");
+    caoEl.style.top = 5.4 * cell + "px";
+  }, 120);
+  setTimeout(() => {
+    const L = LAYOUTS[game.idx];
+    document.getElementById("bannerStats").textContent =
+      "「" + L.name + "」 用了 " + game.steps + " 步 · 公认最优 " + L.moves + " 步";
+    document.getElementById("bannerBest").textContent =
+      isBest && prev ? "🏆 新纪录！（原最佳 " + prev + " 步）" : isBest ? "已记入我的最佳" : "我的最佳 " + store.best[game.idx] + " 步";
+    banner.hidden = false;
+    updateHud();
+  }, 750);
+}
+
+/* ---------- 键盘 ---------- */
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+  else {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) req.call(el);
+  }
+}
+["fullscreenchange", "webkitfullscreenchange"].forEach(ev =>
+  document.addEventListener(ev, () => { buildBoard(); }));
+
+function toggleMute() {
+  game.muted = !game.muted;
+  try { localStorage.setItem("hh_muted", game.muted ? "1" : "0"); } catch (e) {}
+  if (!game.muted) SND.select();
+}
+
+const DIRS = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1], w: [-1, 0], s: [1, 0], a: [0, -1], d: [0, 1], W: [-1, 0], S: [1, 0], A: [0, -1], D: [0, 1] };
+
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  SND.unlock();
+  if (!modal.hidden) {
+    if (e.key === "Escape" || e.key === "l" || e.key === "L") { closeModal(); e.preventDefault(); }
+    return;
+  }
+  if (game.won) {
+    e.preventDefault();
+    if (e.key === "f" || e.key === "F") { toggleFullscreen(); return; }
+    if (e.key === "m" || e.key === "M") { toggleMute(); return; }
+    if (e.key === "Escape") { if (!isFullscreen()) location.href = "./"; return; }
+    if (e.key === "p" || e.key === "P") loadLayout(game.idx - 1); else loadLayout(game.idx + 1);
+    return;
+  }
+  const d = DIRS[e.key];
+  if (d) { e.preventDefault(); trySlide(game.sel, d[0], d[1]); return; }
+  switch (e.key) {
+    case "Tab": e.preventDefault(); cycleSelect(e.shiftKey ? -1 : 1); break;
+    case "z": case "Z": case "u": case "U": case "Backspace": e.preventDefault(); doUndo(); break;
+    case "r": case "R": e.preventDefault(); SND.select(); loadLayout(game.idx); break;
+    case "n": case "N": case "]": e.preventDefault(); SND.select(); loadLayout(game.idx + 1); break;
+    case "p": case "P": case "[": e.preventDefault(); SND.select(); loadLayout(game.idx - 1); break;
+    case "l": case "L": e.preventDefault(); openModal(); break;
+    case "f": case "F": e.preventDefault(); toggleFullscreen(); break;
+    case "m": case "M": e.preventDefault(); toggleMute(); break;
+    case "Escape":
+      e.preventDefault();
+      if (!isFullscreen()) location.href = "./";
+      break;
+  }
+});
+
+/* ---------- 指针：点选 + 拖动 ---------- */
+(() => {
+  let dragI = -1, sx = 0, sy = 0;
+  board.addEventListener("pointerdown", e => {
+    SND.unlock();
+    const el = e.target.closest(".piece");
+    if (!el || game.won) return;
+    dragI = +el.dataset.i;
+    if (dragI !== game.sel) selectPiece(dragI);
+    sx = e.clientX; sy = e.clientY;
+    board.setPointerCapture(e.pointerId);
+  });
+  board.addEventListener("pointermove", e => {
+    if (dragI < 0) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    const th = cell * 0.45;
+    if (Math.abs(dx) < th && Math.abs(dy) < th) return;
+    let dr = 0, dc = 0;
+    if (Math.abs(dx) > Math.abs(dy)) dc = dx > 0 ? 1 : -1; else dr = dy > 0 ? 1 : -1;
+    if (trySlide(dragI, dr, dc)) { sx = e.clientX; sy = e.clientY; }
+    else { sx = e.clientX; sy = e.clientY; }
+  });
+  const end = () => { dragI = -1; };
+  board.addEventListener("pointerup", end);
+  board.addEventListener("pointercancel", end);
+  banner.addEventListener("pointerdown", () => { if (game.won) loadLayout(game.idx + 1); });
+})();
+
+/* ---------- 选局面板 ---------- */
+const modal = document.getElementById("modal");
+const gridEl = document.getElementById("grid");
+const PIECE_COL = { cao: "#0f380f", gen: "#306230", pawn: "#8bac0f" };
+
+const thumbCache = {};
+function makeThumb(idx) {
+  if (thumbCache[idx]) return thumbCache[idx];
+  const L = LAYOUTS[idx];
+  const s = 9, c = document.createElement("canvas");
+  c.width = 4 * s + 2; c.height = 5 * s + 2;
+  const g = c.getContext("2d");
+  g.fillStyle = "#9bbc0f"; g.fillRect(0, 0, c.width, c.height);
+  for (const p of L.pieces) {
+    g.fillStyle = p.h === 2 && p.w === 2 ? PIECE_COL.cao : p.h === 1 && p.w === 1 ? PIECE_COL.pawn : PIECE_COL.gen;
+    g.fillRect(p.c * s + 2, p.r * s + 2, p.w * s - 2, p.h * s - 2);
+  }
+  thumbCache[idx] = c;
+  return c;
+}
+
+function openModal() {
+  if (isFullscreen()) toggleFullscreen();
+  renderModal();
+  modal.hidden = false;
+}
+function closeModal() { modal.hidden = true; }
+
+function renderModal() {
+  gridEl.innerHTML = "";
+  LAYOUTS.forEach((L, i) => {
+    const b = document.createElement("button");
+    b.appendChild(makeThumb(i));
+    const t = document.createElement("div");
+    t.textContent = L.name;
+    b.appendChild(t);
+    const sm = document.createElement("small");
+    const best = store.best[i];
+    sm.textContent = "最优 " + L.moves + (best ? " · 我 " + best : "");
+    b.appendChild(sm);
+    if (best) b.classList.add("done");
+    if (i === game.idx) b.classList.add("cur");
+    b.addEventListener("click", () => { SND.select(); closeModal(); loadLayout(i); });
+    gridEl.appendChild(b);
+  });
+  document.getElementById("progressNote").textContent =
+    "已解开 " + Object.keys(store.best).length + " / " + LAYOUTS.length + " 局";
+}
+document.getElementById("modalClose").addEventListener("click", closeModal);
+modal.addEventListener("click", e => { if (e.target === modal) closeModal(); });
+document.getElementById("resetProgress").addEventListener("click", () => {
+  if (confirm("确定清空华容道的全部纪录吗？")) { store.best = {}; saveStore(); renderModal(); updateHud(); }
+});
+
+/* ---------- 启动 ---------- */
+window.addEventListener("resize", buildBoard);
+loadLayout(store.pos >= 0 && store.pos < LAYOUTS.length ? store.pos : 0);
+</script>
+</body>
+</html>

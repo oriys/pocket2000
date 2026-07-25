@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>关灯游戏 · SOKO-BAN 2000</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(140% 120% at 50% 38%, #a4c31d 0%, #9bbc0f 55%, #83a40d 100%);
+    color: #0f380f;
+    font-family: "PingFang SC", "Microsoft YaHei", ui-monospace, Menlo, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
+  }
+  .screen {
+    position: fixed; inset: 0 0 32px 0;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .hintbar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 32px;
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 12px; color: rgba(15,56,15,.72); letter-spacing: .03em;
+    padding: 0 12px; white-space: nowrap; overflow: hidden;
+  }
+  .hintbar b { color: #0f380f; font-weight: 600; }
+  .hintbar .sep { opacity: .45; }
+  @media (max-width: 640px) { .hintbar .keysHint, .hintbar .sep { display: none; } }
+
+  .modal {
+    position: fixed; inset: 0; z-index: 10;
+    background: rgba(8, 9, 13, .78); backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .modal[hidden] { display: none; }
+  .panel {
+    width: min(700px, 100%); max-height: 86vh; display: flex; flex-direction: column;
+    background: #1d1f27; border: 1px solid #343741; border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6); overflow: hidden; color: #aeb4c4;
+  }
+  .panel header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; }
+  .panel header h2 { font-size: 15px; color: #d8dce8; font-weight: 600; }
+  .panel header button { border: 0; background: none; color: #7c8396; font-size: 20px; cursor: pointer; padding: 2px 8px; }
+  .grid {
+    overflow-y: auto; padding: 4px 16px 16px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px;
+  }
+  .grid button {
+    border: 1px solid #343741; border-radius: 9px;
+    background: #23252d; color: #aeb4c4; font-size: 12px; padding: 8px 4px 6px;
+    cursor: pointer; font-family: inherit; line-height: 1.3;
+  }
+  .grid button canvas { display: block; margin: 0 auto 5px; background: #0f380f; border-radius: 4px; image-rendering: pixelated; }
+  .grid button small { display: block; font-size: 10px; color: #6d7487; }
+  .grid button.done { background: #24371a; border-color: #4a6d2a; color: #b9e07e; }
+  .grid button.done small { color: #86a45c; }
+  .grid button.cur { outline: 2px solid #a9d64c; outline-offset: 1px; }
+  .panel footer { padding: 10px 16px 14px; font-size: 11px; color: #5b6172; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .panel footer .danger { border: 0; background: none; color: #8a5560; cursor: pointer; font-size: 11px; text-decoration: underline; font-family: inherit; }
+</style>
+</head>
+<body>
+<div class="screen" id="screen"><canvas id="lcd"></canvas></div>
+<div class="hintbar">
+  <span id="status">加载中…</span>
+  <span class="sep">｜</span>
+  <span class="keysHint">方向键移动光标 · 空格 / 回车 按灯 · Z 撤销 · R 重开 · N / P 换关 · L 选关 · F 全屏 · M 音效 · Esc 菜单</span>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="panel">
+    <header>
+      <h2>选择关卡（把灯全部关掉）</h2>
+      <button id="modalClose" aria-label="关闭">✕</button>
+    </header>
+    <div class="grid" id="grid"></div>
+    <footer>
+      <span id="progressNote"></span>
+      <button class="danger" id="resetProgress">清空全部进度</button>
+    </footer>
+  </div>
+</div>
+
+<script id="core">
+"use strict";
+/* 关灯游戏引擎（纯逻辑）：5×5，按一盏灯翻转自身与上下左右 */
+const LO = (() => {
+  const N = 5;
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function press(lit, x, y) {
+    [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= N || ny >= N) return;
+      const k = ny * N + nx;
+      if (lit.has(k)) lit.delete(k); else lit.add(k);
+    });
+  }
+  function allOff(lit) { return lit.size === 0; }
+  // 第 level 关：从全灭状态按 par 次生成，天然可解，par 即答案上限
+  function gen(level) {
+    let seedBump = 0;
+    while (true) {
+      const rand = mulberry32((level * 2654435761 + seedBump * 97 + 12345) >>> 0);
+      const par = Math.min(3 + Math.floor((level - 1) / 3), 16);
+      const cells = [];
+      const used = new Set();
+      let guard = 0;
+      while (cells.length < par && guard++ < 500) {
+        const k = (rand() * N * N) | 0;
+        if (used.has(k)) continue;
+        used.add(k);
+        cells.push(k);
+      }
+      const lit = new Set();
+      for (const k of cells) press(lit, k % N, (k / N) | 0);
+      if (!allOff(lit)) return { lit, par, solution: cells };
+      seedBump++; // 极小概率组合互相抵消（静默模式），换个种子
+    }
+  }
+  return { N, press, allOff, gen, mulberry32 };
+})();
+if (typeof module !== "undefined") module.exports = { LO };
+</script>
+
+<script>
+"use strict";
+/* ---------- 调色板 / 位图字体 ---------- */
+const PAL = ["#9bbc0f", "#8bac0f", "#306230", "#0f380f"];
+const FONT = {
+  "0":"111101101101111","1":"010110010010111","2":"111001111100111","3":"111001011001111",
+  "4":"101101111001001","5":"111100111001111","6":"111100111101111","7":"111001010010010",
+  "8":"111101111101111","9":"111101111001111",
+  "A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110",
+  "E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101",
+  "I":"111010010010111","J":"001001001101010","K":"101110100110101","L":"100100100100111",
+  "M":"101111111101101","N":"110101101101101","O":"010101101101010","P":"110101110100100",
+  "Q":"010101101011001","R":"110101110110101","S":"011100010001110","T":"111010010010010",
+  "U":"101101101101111","V":"101101101101010","W":"101101111111101","X":"101101010101101",
+  "Y":"101101010010010","Z":"111001010100111",
+  " ":"000000000000000",":":"000010000010000","/":"001001010100100","-":"000000111000000",
+  "!":"010010010000010",".":"000000000000010",">":"100010001010100","*":"000101010101000",
+};
+function drawText(g, str, x, y, col, scale) {
+  scale = scale || 1;
+  g.fillStyle = PAL[col];
+  for (const ch of String(str).toUpperCase()) {
+    const bits = FONT[ch] || FONT[" "];
+    for (let i = 0; i < 15; i++) {
+      if (bits[i] === "1") g.fillRect(x + (i % 3) * scale, y + ((i / 3) | 0) * scale, scale, scale);
+    }
+    x += 4 * scale;
+  }
+  return x;
+}
+const textW = (str, scale) => String(str).length * 4 * (scale || 1) - (scale || 1);
+
+/* ---------- 音效 ---------- */
+const SND = (() => {
+  let ctx = null;
+  function ensure() {
+    if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function tone(freq, dur, delay, type, vol) {
+    const c = ensure(); if (!c || game.muted) return;
+    const t0 = c.currentTime + (delay || 0);
+    const o = c.createOscillator(), gn = c.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    gn.gain.setValueAtTime(vol || 0.04, t0);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  return {
+    unlock: ensure,
+    cursor(){ tone(880, 0.025, 0, "square", 0.03); },
+    press() { tone(300, 0.07, 0, "square", 0.05); tone(450, 0.05, 0.05); },
+    undo()  { tone(520, 0.04); tone(390, 0.04, 0.05); },
+    select(){ tone(660, 0.05); },
+    bump()  { tone(100, 0.06, 0, "sawtooth", 0.05); },
+    win()   { [523, 659, 784, 988, 1319].forEach((f, i) => tone(f, 0.14, i * 0.1, "square", 0.05)); },
+  };
+})();
+
+/* ---------- 存档 ---------- */
+const STORE_KEY = "lightsout_v1";
+const MAX_LEVEL = 50;
+function loadStore() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; } }
+function saveStore() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {} }
+const store = loadStore();
+store.best = store.best || {};   // best[level] = presses
+if (!(store.pos >= 1 && store.pos <= MAX_LEVEL)) store.pos = 1;
+
+/* ---------- 游戏状态 ---------- */
+const T = 24, HUD_H = 14, PAD = 4, N = LO.N;
+
+const cv = document.getElementById("lcd");
+const g2 = cv.getContext("2d");
+const screenBox = document.getElementById("screen");
+const statusEl = document.getElementById("status");
+
+const game = {
+  level: 1,
+  lit: new Set(),
+  par: 0,
+  solution: [],
+  presses: 0,
+  history: [],
+  cx: 2, cy: 2,
+  won: false,
+  newBest: false,
+  blink: true,
+  cursorOn: true,
+  muted: (function () { try { return localStorage.getItem("hh_muted") === "1"; } catch (e) { return false; } })(),
+};
+let blinkTimer = null;
+setInterval(() => { game.cursorOn = !game.cursorOn; if (!game.won) render(); }, 420);
+
+function loadLevel(lv) {
+  game.level = ((lv - 1) % MAX_LEVEL + MAX_LEVEL) % MAX_LEVEL + 1;
+  const g = LO.gen(game.level);
+  game.lit = g.lit;
+  game.par = g.par;
+  game.solution = g.solution;
+  game.presses = 0;
+  game.history = [];
+  game.cx = 2; game.cy = 2;
+  game.won = false;
+  game.newBest = false;
+  store.pos = game.level;
+  saveStore();
+  clearInterval(blinkTimer); blinkTimer = null;
+  layout();
+  render();
+  updateStatus();
+}
+
+function updateStatus() {
+  const b = store.best[game.level];
+  statusEl.innerHTML =
+    "<b>关灯游戏</b> · 第 " + game.level + " / " + MAX_LEVEL + " 关 · 目标 " + game.par + " 按" +
+    (b ? " · 我的最佳 <b>" + b + "</b>" : "") +
+    " · 已通 <b>" + Object.keys(store.best).length + "</b> 关" +
+    (game.muted ? " · 已静音" : "");
+}
+
+/* ---------- 渲染 ---------- */
+function nativeSize() {
+  return [N * T + PAD * 2, N * T + PAD * 2 + HUD_H];
+}
+function layout() {
+  const [nw, nh] = nativeSize();
+  cv.width = nw; cv.height = nh;
+  const availW = screenBox.clientWidth - 8, availH = screenBox.clientHeight - 8;
+  let scale = Math.min(availW / nw, availH / nh);
+  if (scale >= 1) scale = Math.floor(scale);
+  cv.style.width = nw * scale + "px";
+  cv.style.height = nh * scale + "px";
+}
+
+function render() {
+  const [nw, nh] = nativeSize();
+  g2.fillStyle = PAL[0];
+  g2.fillRect(0, 0, nw, nh);
+
+  drawText(g2, "LV" + String(game.level).padStart(2, "0"), 3, 4, 3);
+  const right = "P" + String(game.presses).padStart(3, "0") + " PAR" + String(game.par).padStart(2, "0");
+  drawText(g2, right, nw - textW(right, 1) - 3, 4, 3);
+  g2.fillStyle = PAL[2];
+  g2.fillRect(0, HUD_H - 2, nw, 1);
+
+  const ox = PAD, oy = HUD_H + 2;
+  g2.fillStyle = PAL[3];
+  g2.fillRect(ox - 2, oy - 2, N * T + 4, N * T + 4);
+
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const px = ox + x * T, py = oy + y * T;
+    const lit = game.lit.has(y * N + x);
+    g2.fillStyle = PAL[3];
+    g2.fillRect(px, py, T, T);
+    if (lit) {
+      g2.fillStyle = PAL[0];
+      g2.fillRect(px + 2, py + 2, T - 4, T - 4);
+      g2.fillStyle = PAL[1];
+      g2.fillRect(px + 4, py + 4, T - 8, T - 8);
+      g2.fillStyle = PAL[0];
+      g2.fillRect(px + 8, py + 8, T - 16, T - 16);
+      // 四向光芒
+      g2.fillRect(px + T / 2 - 1, py, 2, 2);
+      g2.fillRect(px + T / 2 - 1, py + T - 2, 2, 2);
+      g2.fillRect(px, py + T / 2 - 1, 2, 2);
+      g2.fillRect(px + T - 2, py + T / 2 - 1, 2, 2);
+    } else {
+      g2.fillStyle = PAL[2];
+      g2.fillRect(px + 2, py + 2, T - 4, T - 4);
+      g2.fillStyle = PAL[3];
+      g2.fillRect(px + 4, py + 4, T - 8, T - 8);
+    }
+  }
+
+  // 光标
+  if (!game.won && game.cursorOn) {
+    const px = ox + game.cx * T, py = oy + game.cy * T;
+    const lit = game.lit.has(game.cy * N + game.cx);
+    g2.fillStyle = lit ? PAL[3] : PAL[0];
+    g2.fillRect(px, py, T, 2); g2.fillRect(px, py + T - 2, T, 2);
+    g2.fillRect(px, py, 2, T); g2.fillRect(px + T - 2, py, 2, T);
+  }
+
+  if (game.won) {
+    const bw = Math.min(nw - 6, 120), bh = 46;
+    const bx = Math.floor((nw - bw) / 2), by = Math.floor((nh - bh) / 2);
+    g2.fillStyle = PAL[0]; g2.fillRect(bx, by, bw, bh);
+    g2.fillStyle = PAL[3];
+    g2.fillRect(bx, by, bw, 1); g2.fillRect(bx, by + bh - 1, bw, 1);
+    g2.fillRect(bx, by, 1, bh); g2.fillRect(bx + bw - 1, by, 1, bh);
+    g2.fillStyle = PAL[2]; g2.fillRect(bx + 2, by + 2, bw - 4, 1); g2.fillRect(bx + 2, by + bh - 3, bw - 4, 1);
+    let t = "CLEAR!";
+    drawText(g2, t, Math.floor((nw - textW(t, 2)) / 2), by + 6, 3, 2);
+    t = "P " + game.presses + " / PAR " + game.par + (game.newBest ? " *" : "");
+    drawText(g2, t, Math.floor((nw - textW(t, 1)) / 2), by + 23, 3);
+    if (game.blink) {
+      t = "> PRESS ANY KEY";
+      drawText(g2, t, Math.floor((nw - textW(t, 1)) / 2), by + 34, 2);
+    }
+  }
+}
+
+/* ---------- 操作 ---------- */
+function pressCell(x, y, isUndo) {
+  if (game.won) return;
+  LO.press(game.lit, x, y);
+  if (isUndo) {
+    game.presses--;
+    SND.undo();
+  } else {
+    game.presses++;
+    game.history.push([x, y]);
+    SND.press();
+  }
+  render();
+  if (!isUndo && LO.allOff(game.lit)) handleWin();
+}
+
+function doUndo() {
+  if (game.won) return;
+  const u = game.history.pop();
+  if (!u) { SND.bump(); return; }
+  pressCell(u[0], u[1], true);
+}
+
+function moveCursor(dx, dy) {
+  game.cx = Math.min(N - 1, Math.max(0, game.cx + dx));
+  game.cy = Math.min(N - 1, Math.max(0, game.cy + dy));
+  game.cursorOn = true;
+  SND.cursor();
+  render();
+}
+
+function handleWin() {
+  game.won = true;
+  const prev = store.best[game.level];
+  if (!prev || game.presses < prev) {
+    store.best[game.level] = game.presses;
+    game.newBest = !!prev;
+    saveStore();
+  }
+  SND.win();
+  updateStatus();
+  game.blink = true;
+  blinkTimer = setInterval(() => { game.blink = !game.blink; render(); }, 480);
+  render();
+}
+
+/* ---------- 键盘 ---------- */
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+  else {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) req.call(el);
+  }
+}
+["fullscreenchange", "webkitfullscreenchange"].forEach(ev =>
+  document.addEventListener(ev, () => { layout(); render(); }));
+
+function toggleMute() {
+  game.muted = !game.muted;
+  try { localStorage.setItem("hh_muted", game.muted ? "1" : "0"); } catch (e) {}
+  updateStatus();
+  if (!game.muted) SND.select();
+}
+
+const KEYMAP = {
+  ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+  w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0], W: [0, -1], S: [0, 1], A: [-1, 0], D: [1, 0],
+};
+
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  SND.unlock();
+  if (!modal.hidden) {
+    if (e.key === "Escape" || e.key === "l" || e.key === "L") { closeModal(); e.preventDefault(); }
+    return;
+  }
+  if (game.won) {
+    e.preventDefault();
+    if (e.key === "f" || e.key === "F") { toggleFullscreen(); return; }
+    if (e.key === "m" || e.key === "M") { toggleMute(); return; }
+    if (e.key === "Escape") { if (!isFullscreen()) location.href = "./"; return; }
+    if (e.key === "p" || e.key === "P") loadLevel(game.level - 1); else loadLevel(game.level + 1);
+    return;
+  }
+  const d = KEYMAP[e.key];
+  if (d) { e.preventDefault(); moveCursor(d[0], d[1]); return; }
+  switch (e.key) {
+    case " ": case "Enter": e.preventDefault(); pressCell(game.cx, game.cy); break;
+    case "z": case "Z": case "u": case "U": case "Backspace": e.preventDefault(); doUndo(); break;
+    case "r": case "R": e.preventDefault(); SND.select(); loadLevel(game.level); break;
+    case "n": case "N": case "]": e.preventDefault(); SND.select(); loadLevel(game.level + 1); break;
+    case "p": case "P": case "[": e.preventDefault(); SND.select(); loadLevel(game.level - 1); break;
+    case "l": case "L": e.preventDefault(); openModal(); break;
+    case "f": case "F": e.preventDefault(); toggleFullscreen(); break;
+    case "m": case "M": e.preventDefault(); toggleMute(); break;
+    case "Escape":
+      e.preventDefault();
+      if (!isFullscreen()) location.href = "./";
+      break;
+  }
+});
+
+/* ---------- 指针 ---------- */
+screenBox.addEventListener("pointerdown", e => {
+  SND.unlock();
+  if (game.won) { loadLevel(game.level + 1); return; }
+  const rect = cv.getBoundingClientRect();
+  const [nw] = nativeSize();
+  const scale = rect.width / nw;
+  const x = Math.floor(((e.clientX - rect.left) / scale - PAD) / T);
+  const y = Math.floor(((e.clientY - rect.top) / scale - HUD_H - 2) / T);
+  if (x < 0 || y < 0 || x >= N || y >= N) return;
+  game.cx = x; game.cy = y;
+  pressCell(x, y);
+});
+
+/* ---------- 选关面板 ---------- */
+const modal = document.getElementById("modal");
+const gridEl = document.getElementById("grid");
+
+function makeThumb(lv) {
+  const g = LO.gen(lv);
+  const s = 5, c = document.createElement("canvas");
+  c.width = N * s + 2; c.height = N * s + 2;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#0f380f"; ctx.fillRect(0, 0, c.width, c.height);
+  for (const k of g.lit) {
+    ctx.fillStyle = "#9bbc0f";
+    ctx.fillRect((k % N) * s + 2, ((k / N) | 0) * s + 2, s - 1, s - 1);
+  }
+  return c;
+}
+
+function openModal() {
+  if (isFullscreen()) toggleFullscreen();
+  renderModal();
+  modal.hidden = false;
+}
+function closeModal() { modal.hidden = true; }
+
+function renderModal() {
+  gridEl.innerHTML = "";
+  for (let lv = 1; lv <= MAX_LEVEL; lv++) {
+    const b = document.createElement("button");
+    b.appendChild(makeThumb(lv));
+    const t = document.createElement("div");
+    t.textContent = "第 " + lv + " 关";
+    b.appendChild(t);
+    const sm = document.createElement("small");
+    const best = store.best[lv];
+    sm.textContent = best ? "最佳 " + best : "目标 " + LO.gen(lv).par;
+    b.appendChild(sm);
+    if (best) b.classList.add("done");
+    if (lv === game.level) b.classList.add("cur");
+    b.addEventListener("click", () => { SND.select(); closeModal(); loadLevel(lv); });
+    gridEl.appendChild(b);
+  }
+  document.getElementById("progressNote").textContent =
+    "已通 " + Object.keys(store.best).length + " / " + MAX_LEVEL + " 关";
+}
+document.getElementById("modalClose").addEventListener("click", closeModal);
+modal.addEventListener("click", e => { if (e.target === modal) closeModal(); });
+document.getElementById("resetProgress").addEventListener("click", () => {
+  if (confirm("确定清空关灯游戏的全部纪录吗？")) { store.best = {}; saveStore(); renderModal(); updateStatus(); }
+});
+
+/* ---------- 启动 ---------- */
+window.addEventListener("resize", () => { layout(); render(); });
+loadLevel(store.pos);
+</script>
+</body>
+</html>
