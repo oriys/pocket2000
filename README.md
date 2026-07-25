@@ -1,8 +1,8 @@
-# SOKO-BAN 2000 · 怀旧掌机益智合集
+# POCKET 2000 · 怀旧掌机益智合集
 
 复古 Game Boy 绿屏像素风的益智小游戏合集。每个游戏都是纯 HTML 单文件，无依赖、无构建，双击即玩。
 
-**▶ 在线游玩：<https://oriys.github.io/box/>**
+**▶ 在线游玩：<https://oriys.github.io/pocket2000/>**
 
 ![掌机菜单](screenshot.png)
 
@@ -12,10 +12,10 @@
 
 | 游戏 | 内容 | 直达 |
 |---|---|---|
-| **推箱子** SOKOBAN | 经典 245 关：原版 50 + 隐藏附加 40 + Microban 155，带地图缩略图选关 | [sokoban.html](https://oriys.github.io/box/sokoban.html) |
-| **华容道** KLOTSKI | 39 局经典开局（横刀立马、水泄不通…），全部经 BFS 验证可解，显示公认最优步数 | [klotski.html](https://oriys.github.io/box/klotski.html) |
-| **数字华容道** 15 PUZZLE | 3×3 / 4×4 / 5×5 三种规格，随机游走打乱保证有解，计步计时 | [fifteen.html](https://oriys.github.io/box/fifteen.html) |
-| **关灯游戏** LIGHTS OUT | 50 关渐进难度，确定性生成、保证可解，显示目标按数 | [lightsout.html](https://oriys.github.io/box/lightsout.html) |
+| **推箱子** SOKOBAN | 经典 245 关：原版 50 + 隐藏附加 40 + Microban 155，带地图缩略图选关 | [sokoban.html](https://oriys.github.io/pocket2000/sokoban.html) |
+| **华容道** KLOTSKI | 39 局经典开局（横刀立马、水泄不通…），全部经 BFS 验证可解，显示公认最优步数 | [klotski.html](https://oriys.github.io/pocket2000/klotski.html) |
+| **数字华容道** 15 PUZZLE | 3×3 / 4×4 / 5×5 三种规格，随机游走打乱保证有解，计步计时 | [fifteen.html](https://oriys.github.io/pocket2000/fifteen.html) |
+| **关灯游戏** LIGHTS OUT | 50 关渐进难度，确定性生成、保证可解，显示目标按数 | [lightsout.html](https://oriys.github.io/pocket2000/lightsout.html) |
 
 ![华容道](screenshot-klotski.png)
 
